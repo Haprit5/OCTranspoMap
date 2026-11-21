@@ -1,0 +1,3930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Ottawa Rapid Transit — Rail and Bus Map</title>
+<style>
+  /* Two themes, one token set. Anything that differs between light and dark
+     goes through a variable here; the only fixed colours left in the sheet are
+     inside .iw, because Google renders the info window on a white card in both
+     themes, and pure #fff on saturated line colours.
+
+     Light is the default, so it lives on bare :root and dark is the override.
+     That ordering matters: the stylesheet is applied before any script runs,
+     so whichever theme sits on :root is what paints first. Putting the default
+     there means no flash of the wrong theme on load. */
+  :root {
+    /* Tells the browser which way to paint the things CSS can't reach: the
+       scrollbar on the station list, the search field's inner furniture, form
+       focus rings. Without it a dark theme keeps light native controls, most
+       visibly as a white scrollbar down the sidebar in Chrome. */
+    color-scheme: light;
+
+    --bg: #eef1f5;
+    --panel: #ffffff;
+    --panel-2: #f4f6fa;
+    --panel-3: #f7f9fc;
+    --glass: rgba(255, 255, 255, .94);
+    --glass-strong: rgba(255, 255, 255, .97);
+    --line: #d5dde7;
+    --text: #1b2430;
+    --muted: #5c6a7d;
+    --faint: #8b96a6;
+    /* Must match PALETTES.light.transitway — the legend has to show the
+       colour actually drawn on the map. */
+    --busline: #9fb2d9;
+    --placeholder: #9aa5b4;
+    --hover: #eaeff6;
+    --hover-2: #dfe7f1;
+    --switch: #c4cdda;
+    --map-bg: #e6eaef;
+    --legend-dash: #47535f;
+    --shadow: rgba(20, 32, 54, .16);
+    --accent: #1a73e8;
+    --radius: 10px;
+  }
+
+  :root.dark {
+    color-scheme: dark;
+
+    --bg: #10131a;
+    --panel: #171b24;
+    --panel-2: #1e232e;
+    --panel-3: #141821;
+    --glass: rgba(23, 27, 36, .93);
+    --glass-strong: rgba(23, 27, 36, .96);
+    --line: #2a303d;
+    --text: #e8ecf3;
+    --muted: #97a1b3;
+    --faint: #737d90;
+    --busline: #6274c4;   /* matches PALETTES.dark.transitway */
+    --placeholder: #6f7889;
+    --hover: #232937;
+    --hover-2: #2a3140;
+    --switch: #39404f;
+    --map-bg: #0c0f15;
+    --legend-dash: #cfd6e2;
+    --shadow: rgba(0, 0, 0, .5);
+    --accent: #4a9eff;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;      /* Safari resizes text on rotate without this */
+    text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button, .toggle, .station, .near, .lp-stop, .sug {
+    touch-action: manipulation;          /* no 300 ms double-tap-zoom delay */
+  }
+
+  #app {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    height: 100%;
+  }
+
+  /* ---------- Sidebar ---------- */
+
+  #sidebar {
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  header.brand {
+    position: relative;
+    padding: 18px 52px 14px 18px;   /* room on the right for the close button */
+    border-bottom: 1px solid var(--line);
+  }
+
+  header.brand h1 {
+    margin: 0;
+    font-size: 17px;
+    letter-spacing: -0.01em;
+  }
+
+  header.brand p {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .search-wrap {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+    position: relative;
+  }
+
+  #search {
+    width: 100%;
+    padding: 9px 11px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+  }
+  #search:focus { border-color: var(--accent); }
+  #search::placeholder { color: var(--placeholder); }
+
+  /* ---------- Address suggestions ---------- */
+
+  #suggest {
+    position: absolute;
+    left: 14px; right: 14px; top: calc(100% - 6px);
+    z-index: 30;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px var(--shadow);
+    overflow: hidden;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  #suggest[hidden] { display: none; }
+
+  #suggest .sug {
+    padding: 8px 11px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--line);
+  }
+  #suggest .sug:last-child { border-bottom: none; }
+  #suggest .sug:hover,
+  #suggest .sug.active { background: var(--hover-2); }
+  #suggest .sug .main { font-size: 12.5px; }
+  #suggest .sug .sub { font-size: 11px; color: var(--muted); }
+
+  #suggest .msg {
+    padding: 9px 11px;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--muted);
+  }
+  #suggest .msg strong { color: var(--text); }
+  /* Console URLs are long; let them wrap rather than widen the dropdown. */
+  #suggest .msg a {
+    color: var(--accent);
+    word-break: break-all;
+  }
+
+  /* ---------- Address result panel ---------- */
+
+  #addr-panel {
+    border-bottom: 1px solid var(--line);
+    padding: 12px 14px 10px;
+    background: var(--panel-3);
+  }
+  #addr-panel[hidden] { display: none; }
+
+  #addr-panel .addr-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  #addr-panel .addr-name { flex: 1; min-width: 0; font-weight: 600; font-size: 13px; }
+  #addr-panel .addr-sub { font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+
+  /* Shared by the address panel and the line popup. */
+  #addr-clear, #lp-close {
+    background: none;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    border-radius: 6px;
+    width: 22px; height: 22px;
+    line-height: 1;
+    font-size: 14px;
+    cursor: pointer;
+    flex: none;
+  }
+  #addr-clear:hover, #lp-close:hover { color: var(--text); border-color: var(--accent); }
+
+  .near {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 6px 4px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .near:hover { background: var(--hover); }
+  .near .bar { width: 4px; height: 26px; border-radius: 2px; flex: none; }
+  .near .who { flex: 1; min-width: 0; }
+  .near .who .st { font-size: 12.5px; }
+  .near .who .ln { font-size: 10.5px; color: var(--muted); }
+  .near .dist { text-align: right; flex: none; }
+  .near .dist .m { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .near .dist .walk { font-size: 10.5px; color: var(--muted); }
+  .near.hidden-line { opacity: .45; }
+
+  #addr-panel .addr-foot {
+    margin-top: 8px;
+    font-size: 10.5px;
+    color: var(--muted);
+  }
+
+  #lines {
+    overflow-y: auto;
+    flex: 1;
+    padding: 8px 10px 20px;
+    min-height: 0;
+  }
+
+  .line-card {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+
+  .line-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 12px;
+    cursor: pointer;
+    /* Safari wants the prefix until 16.4, and this header is the one thing a
+       double-tap would otherwise select instead of expanding. */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .line-head:hover { background: var(--hover); }
+
+  .swatch {
+    width: 10px;
+    height: 26px;
+    border-radius: 5px;
+    flex: none;
+  }
+
+  .line-meta { flex: 1; min-width: 0; }
+  .line-meta .name { font-weight: 600; font-size: 13.5px; }
+  .line-meta .sub { font-size: 11.5px; color: var(--muted); }
+
+  .toggle {
+    width: 34px; height: 20px;
+    border-radius: 10px;
+    background: var(--switch);
+    position: relative;
+    flex: none;
+    transition: background .15s;
+  }
+  .toggle::after {
+    content: "";
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform .15s;
+  }
+  .line-card.on .toggle { background: var(--accent); }
+  .line-card.on .toggle::after { transform: translateX(14px); }
+
+  .stations { display: none; border-top: 1px solid var(--line); padding: 6px 0; }
+  .line-card.expanded .stations { display: block; }
+
+  .station {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px 6px 16px;
+    cursor: pointer;
+    font-size: 12.5px;
+  }
+  .station:hover { background: var(--hover); }
+
+  .dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    background: var(--panel-2);
+    flex: none;
+  }
+  .station.transfer .dot { background: currentColor; }
+
+  .station .label { flex: 1; color: var(--text); }
+  /* Keeping this mark grey takes two mechanisms, because engines disagree:
+     U+FE0E plus font-variant-emoji asks for the monochrome text glyph (Chrome
+     131+, Firefox 133+), and the grayscale filter catches everywhere that
+     ignores both — Safari and Android still paint the colour emoji, which
+     would come out blue. The info window keeps the colour version.
+     Both stop lists — sidebar and line popup — share this. */
+  .station .a11y,
+  #line-panel .lp-stop .a11y {
+    font-size: 12px;
+    flex: none;
+    color: var(--faint);
+    font-variant-emoji: text;
+    filter: grayscale(1);
+    opacity: .8;
+  }
+  .station:hover .a11y { color: var(--muted); opacity: 1; }
+  .station .tag {
+    font-size: 10px;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+
+  footer.note {
+    padding: 10px 16px;
+    border-top: 1px solid var(--line);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  footer.note a { color: var(--muted); }
+
+  /* ---------- Map ---------- */
+
+  #map { width: 100%; height: 100%; background: var(--map-bg); }
+
+  #map-wrap { position: relative; min-width: 0; }
+
+  /* The map is raster — no map ID means no vector tiles, so it can't be
+     rotated or tilted and north is always up. The compass is therefore fixed,
+     which is still worth having: it's what tells you at a glance that Blair is
+     the eastbound end and Limebank the southbound one. */
+  /* Compass over legend, stacked rather than each pinned to its own offset —
+     the legend's height changes with its rows, so a hard-coded bottom for the
+     compass would drift the moment a row is added. */
+  #map-corner {
+    position: absolute;
+    left: 12px; bottom: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  #compass {
+    width: 46px; height: 46px;
+    display: grid;
+    place-items: center;
+    background: var(--glass);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+  }
+  #compass svg { width: 27px; height: 27px; display: block; }
+  #compass .north { fill: var(--text); }
+  #compass .south { fill: var(--muted); opacity: .5; }
+  #compass .tick {
+    position: absolute;
+    top: 2px;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    color: var(--muted);
+  }
+
+  /* Nothing on the map applies inside a panorama, the compass included. */
+  body.streetview #compass { display: none; }
+
+  #legend {
+    background: var(--glass);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    font-size: 12px;
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+  }
+  #legend .row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  #legend .row:first-of-type { margin-top: 0; }
+  #legend .bar { width: 22px; height: 4px; border-radius: 2px; }
+  #legend .title { font-weight: 600; margin-bottom: 8px; }
+  #legend .dashed {
+    width: 22px; height: 0;
+    border-top: 3px dashed var(--legend-dash);
+  }
+  /* Same two mechanisms as the station list, and for the same reason — without
+     them this prints as a blue colour emoji in every engine while the identical
+     mark in the sidebar prints grey. */
+  #legend .sym {
+    width: 22px;
+    text-align: center;
+    font-size: 14px;
+    color: var(--muted);
+    font-variant-emoji: text;
+    filter: grayscale(1);
+  }
+  #legend .bar.under-construction {
+    background: repeating-linear-gradient(90deg,
+      var(--muted) 0 4px, transparent 4px 7px);
+  }
+
+  /* Thin, to say the same thing the map does: these sit under the trains. */
+  #legend .bar.transitway-bar { height: 2px; background: var(--busline); }
+  .line-card.transitway .swatch.transitway-swatch { background: var(--busline); width: 4px; }
+
+  /* Stage 2 reads as provisional: hollow swatch, dimmed rows. */
+  .line-card.future .swatch.dashed-swatch {
+    background: repeating-linear-gradient(180deg,
+      var(--muted) 0 5px, transparent 5px 9px);
+  }
+  .station.future-row { cursor: default; }
+  .station.future-row:hover { background: none; }
+  .station.future-row .dot { opacity: .6; }
+
+  /* A rapid bus row is two lines, not one — the station and the routes calling
+     there — so it stops being a centred flex row and hangs the dot from the
+     top instead. */
+  .station.bus-row { align-items: flex-start; }
+  .station.bus-row .dot {
+    margin-top: 5px;
+    background: var(--busline);
+    border-color: var(--busline);
+  }
+  .bus-meta { flex: 1; min-width: 0; }
+  .bus-meta .label { display: block; }
+  .bus-meta .none { font-size: 10.5px; color: var(--faint); font-style: italic; }
+  .bus-routes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin-top: 4px;
+  }
+  /* The sidebar twin of .iw .route. Same chip, different token set — the info
+     window is painted on Google's white card in both themes, this isn't. */
+  .bus-routes .route {
+    min-width: 22px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--muted);
+    text-align: center;
+    text-decoration: none;
+  }
+  .bus-routes .route:hover {
+    background: var(--hover-2);
+    border-color: var(--busline);
+    color: var(--text);
+  }
+  .future-note {
+    display: block;
+    font-size: 10.5px;
+    color: var(--muted);
+  }
+
+  /* ---------- Line details popup ---------- */
+
+  #line-panel {
+    position: absolute;
+    left: 12px; top: 12px;
+    width: 272px;
+    max-height: calc(100% - 24px);
+    display: flex;
+    flex-direction: column;
+    background: var(--glass-strong);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: 0 10px 30px var(--shadow);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    overflow: hidden;
+    z-index: 20;
+  }
+  #line-panel[hidden] { display: none; }
+
+  /* The legend and the popup share the left gutter — popup wins. */
+  body.line-open #legend { display: none; }
+
+  /* Collapsing the sidebar hands its column to the map. */
+  body.sidebar-hidden #sidebar { display: none; }
+  body.sidebar-hidden #app { grid-template-columns: 1fr; }
+
+  /* The control is one idea in two places: a hamburger over the map when the
+     sidebar is away, and an × in the sidebar's own corner when it's there.
+     Only ever one of them is on screen. */
+  #sidebar-open {
+    position: absolute;
+    left: 12px; top: 12px;
+    z-index: 25;
+    display: none;
+    place-items: center;
+    width: 36px; height: 36px;
+    background: var(--glass);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--text);
+    cursor: pointer;
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+  }
+  body.sidebar-hidden #sidebar-open { display: grid; }
+  #sidebar-open:hover { border-color: var(--accent); }
+
+  /* Three bars drawn from one element, so they inherit colour with the theme. */
+  #sidebar-open .bars,
+  #sidebar-open .bars::before,
+  #sidebar-open .bars::after {
+    display: block;
+    width: 15px; height: 2px;
+    border-radius: 1px;
+    background: currentColor;
+  }
+  #sidebar-open .bars { position: relative; }
+  #sidebar-open .bars::before,
+  #sidebar-open .bars::after { content: ""; position: absolute; left: 0; }
+  #sidebar-open .bars::before { top: -5px; }
+  #sidebar-open .bars::after { top: 5px; }
+
+  #sidebar-close {
+    position: absolute;
+    top: 14px; right: 14px;
+    width: 28px; height: 28px;
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: 17px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  #sidebar-close:hover { color: var(--text); border-color: var(--accent); }
+
+  /* The hamburger takes the top-left corner the line popup wants, so the popup
+     steps down out of its way — but only while the sidebar is away. */
+  body.sidebar-hidden #line-panel { top: 60px; max-height: calc(100% - 72px); }
+
+  /* Nothing the map's own controls do applies inside a Street View panorama. */
+  /* #sidebar-open is listed separately because it isn't inside #map-controls —
+     it sits at the map's top-left on its own, so hiding the control cluster
+     doesn't reach it. Must stay after the body.sidebar-hidden rule that shows
+     it: same specificity, so source order decides. */
+  body.streetview #legend,
+  body.streetview #map-controls,
+  body.streetview #sidebar-open { display: none; }
+
+  #line-panel .lp-head {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  #line-panel .lp-bar { width: 6px; border-radius: 3px; flex: none; align-self: stretch; min-height: 32px; }
+  #line-panel .lp-title { flex: 1; min-width: 0; }
+  #line-panel .lp-title .n { font-weight: 600; font-size: 13.5px; }
+  #line-panel .lp-title .fr { font-size: 11px; color: var(--muted); font-style: italic; }
+
+  #line-panel .lp-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 9px 10px;
+    padding: 11px 12px;
+  }
+  #line-panel .lp-stat .k {
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--muted);
+  }
+  #line-panel .lp-stat .v { font-size: 12.5px; }
+
+  #line-panel .lp-notes {
+    padding: 0 12px 11px;
+    font-size: 11.5px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+  }
+  #line-panel .lp-notes div { margin-top: 4px; }
+  #line-panel .lp-notes b { color: var(--text); font-weight: 500; }
+
+  #line-panel .lp-list { overflow-y: auto; padding: 7px 0 10px; }
+
+  #line-panel .lp-stop {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 12px;
+    cursor: pointer;
+    font-size: 12.5px;
+    position: relative;
+  }
+  #line-panel .lp-stop:hover { background: var(--hover); }
+
+  /* Spine joining consecutive stops, aligned to the centre of the 9px dot. */
+  #line-panel .lp-stop::before {
+    content: "";
+    position: absolute;
+    left: 15.5px; top: 50%; bottom: -5px;
+    width: 2px;
+    background: currentColor;
+    opacity: .45;
+  }
+  #line-panel .lp-stop:last-child::before { display: none; }
+
+  #line-panel .lp-stop.transfer .dot { background: currentColor; }
+  #line-panel .lp-stop .label { flex: 1; color: var(--text); }
+  #line-panel .lp-stop.end .label { font-weight: 600; }
+  #line-panel .lp-stop .tag {
+    font-size: 10px;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+    flex: none;
+  }
+
+  /* Sidebar "line details" button */
+  .line-info {
+    background: none;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    border-radius: 50%;
+    width: 20px; height: 20px;
+    line-height: 1;
+    font-size: 11px;
+    font-style: italic;
+    font-family: Georgia, serif;
+    cursor: pointer;
+    flex: none;
+  }
+  .line-info:hover { color: var(--text); border-color: var(--accent); }
+
+  #map-controls {
+    position: absolute;
+    right: 12px; top: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+  }
+
+  /* Segmented controls — basemap and theme share one look. */
+
+  .segmented {
+    display: flex;
+    background: var(--glass);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+  }
+
+  .segmented button {
+    background: none;
+    border: none;
+    border-right: 1px solid var(--line);
+    color: var(--muted);
+    padding: 8px 12px;
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .segmented button:last-child { border-right: none; }
+  .segmented button:hover { color: var(--text); }
+  .segmented button.active { background: var(--accent); color: #fff; font-weight: 600; }
+
+  /* Station and address markers are drawn by the Maps API as vector symbols
+     (see stationIcon), so they carry no CSS of their own. */
+
+  /* ---------- Station name labels ---------- */
+
+  /* Labels share markerLayer with the station dots, and the API gives each dot
+     its own z-index (10, or 20 for an interchange). Left at auto this container
+     sits under all of them, so a neighbouring dot or the route beneath it drew
+     over the text. Above the dots, below the info window's floatPane. */
+  .stop-labels { position: absolute; top: 0; left: 0; z-index: 40; }
+
+  .stop-label {
+    position: absolute;
+    top: 0; left: 0;
+    white-space: nowrap;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text);
+    /* A halo instead of a plate: names stay legible over any basemap without
+       25 solid chips cluttering the view.
+
+       Eight hard offsets rather than a few blurred ones. A blurred shadow is
+       semi-transparent at its edge, so a 5px route colour behind the text still
+       showed between the letterforms and read as the line being drawn on top —
+       it never was; labels sit in markerLayer, routes in overlayLayer below.
+       Zero-blur offsets in every direction give a genuinely opaque ring, and
+       the blurred one just softens the outside edge. */
+    text-shadow:
+      -2px -2px 0 var(--bg),  0 -2px 0 var(--bg),  2px -2px 0 var(--bg),
+      -2px  0   0 var(--bg),                       2px  0   0 var(--bg),
+      -2px  2px 0 var(--bg),  0  2px 0 var(--bg),  2px  2px 0 var(--bg),
+       0 0 5px var(--bg);
+    pointer-events: none;   /* never intercept a click meant for the dot */
+    will-change: transform;
+  }
+
+  /* Hover no longer summons the name — it's already there — so it emphasises. */
+  .stop-label.hot { color: var(--accent); }
+
+  /* Stage 2 names read exactly like the rest — the hollow dot and the dashed
+     line already say "not yet", so styling the text differently as well was
+     saying it twice. The class stays as a hook for ordering and testing. */
+
+  /* Over a photograph the halo has to be black whichever theme is active. */
+  body.imagery .stop-label {
+    color: #fff;
+    text-shadow:
+      -2px -2px 0 #000,  0 -2px 0 #000,  2px -2px 0 #000,
+      -2px  0   0 #000,                  2px  0   0 #000,
+      -2px  2px 0 #000,  0  2px 0 #000,  2px  2px 0 #000,
+       0 0 5px #000;
+  }
+
+  /* ---------- Info window ---------- */
+
+  .iw { color: #1a1d23; font-family: inherit; min-width: 190px; }
+  .iw h3 { margin: 0 0 2px; font-size: 14.5px; }
+  .iw .badges { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+  .iw .badge {
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 600;
+    border-radius: 4px;
+    padding: 2px 7px;
+  }
+  .iw .addr { margin: 0 0 3px; font-size: 12px; color: #374151; }
+
+  .iw .a11y {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    margin: 8px 0 0;
+    padding: 6px 8px;
+    background: #eef2ff;
+    border-radius: 6px;
+    font-size: 11.5px;
+    color: #3730a3;
+    line-height: 1.4;
+  }
+  .iw .a11y .sym { font-size: 15px; line-height: 1.1; }
+  .iw .a11y strong { font-weight: 600; }
+
+  .iw .conn { margin: 0; font-size: 12px; color: #4b5563; }
+
+  /* Route numbers as chips — a paragraph of 31 comma-separated numbers is
+     unreadable, and these are things you scan for one value. */
+  .iw .routes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 8px;
+    max-height: 132px;
+    overflow-y: auto;
+  }
+  /* Every route number is a link to that route's schedule. Styled as a chip
+     rather than as a link — underlining a grid of two-digit numbers turns it
+     into noise — so the affordance is carried by the hover state instead. */
+  .iw .route {
+    display: block;
+    min-width: 26px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #eef1f5;
+    border: 1px solid #d7dee7;
+    font-size: 11px;
+    font-weight: 600;
+    color: #33415a;
+    text-align: center;
+    text-decoration: none;
+  }
+  .iw a.route:hover { background: #dbe4f0; border-color: #9fb2cc; color: #16233a; }
+
+  /* Amber rather than the blue used for accessibility: this is a caveat about
+     the station, not a facility it offers. Says what is being built, and sends
+     you to OC Transpo for today's actual closures — live status can't live in
+     a static file. */
+  .iw .alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    margin: 8px 0 0;
+    padding: 6px 8px;
+    background: #fff7ed;
+    border-radius: 6px;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: #7c2d12;
+  }
+  .iw .alert .sym { font-size: 13px; line-height: 1.2; }
+  .iw .alert a { color: #9a3412; font-weight: 600; }
+  .iw .from { margin: 6px 0 0; font-size: 11px; color: #6b7280; font-style: italic; }
+
+  .iw .links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin-top: 9px;
+    padding-top: 8px;
+    border-top: 1px solid #e5e7eb;
+  }
+  .iw .links a {
+    font-size: 12px;
+    color: #1a73e8;
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .iw .links a:hover { text-decoration: underline; }
+
+  /* On a phone or tablet the info window is a big share of the screen, so it
+     tightens up. Matched on width OR a coarse pointer: an iPad in portrait is
+     768px wide and would otherwise take the desktop sizing, and the pointer
+     test catches touch devices whatever their width. */
+  @media (max-width: 1024px), (pointer: coarse) {
+    .iw { min-width: 0; }
+    .iw h3 { font-size: 13px; }
+    .iw .badges { gap: 4px; margin-bottom: 6px; }
+    .iw .badge { font-size: 9.5px; padding: 1px 5px; }
+    .iw .addr, .iw .conn { font-size: 11px; }
+    .iw .a11y {
+      gap: 5px;
+      margin-top: 6px;
+      padding: 5px 7px;
+      font-size: 10.5px;
+      line-height: 1.35;
+    }
+    .iw .a11y .sym { font-size: 13px; }
+    .iw .from { margin-top: 5px; font-size: 10px; }
+    .iw .links { gap: 3px 10px; margin-top: 7px; padding-top: 6px; }
+    .iw .links a { font-size: 11px; }
+  }
+
+  /* ---------- Errors / small screens ---------- */
+
+  /* Opaque and on top: when auth fails Google paints its own "Oops!" panel
+     into the same element, and two messages layered over each other are
+     unreadable. This covers it. */
+  #error {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    display: none;
+    overflow-y: auto;
+    background: var(--panel);
+    padding: 20px;
+  }
+  #error.on { display: flex; }
+
+  /* margin:auto inside a flex parent centres without clipping the top when the
+     message is taller than the box — which it is on a phone. */
+  #error .inner {
+    margin: auto;
+    max-width: 34em;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13.5px;
+    line-height: 1.6;
+  }
+
+  /* Nothing on the map works while it's failed; the controls just sat on top
+     of the message. */
+  body.auth-failed #map-controls,
+  body.auth-failed #legend { display: none; }
+  #error code {
+    background: var(--panel-2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--text);
+  }
+
+  @media (max-width: 760px) {
+    /* Phone layout: the map takes a fixed slice of the viewport and the
+       sidebar flows underneath, scrolled by the page itself. dvh rather than
+       vh so Safari's collapsing address bar doesn't crop it. */
+    html, body { height: auto; }
+
+    #app {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto auto;
+      height: auto;
+      min-height: 100vh;
+      min-height: 100dvh;
+    }
+
+    #map-wrap { order: 1; height: 58vh; height: 58dvh; }
+
+    #sidebar {
+      order: 2;
+      border-right: none;
+      border-top: 1px solid var(--line);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    /* One scroller, not two — a nested scroll area inside a scrolling page is
+       miserable to use with a thumb. */
+    #lines { overflow: visible; flex: none; }
+
+    #legend { display: none; }
+
+    /* With the sidebar folded away there's nothing below the map, so it takes
+       the whole viewport rather than leaving dead space under it. */
+    body.sidebar-hidden #map-wrap { height: 100vh; height: 100dvh; }
+
+    /* 16px keeps iOS from zooming the whole page when the field takes focus. */
+    #search { font-size: 16px; }
+
+    /* Comfortable touch targets. */
+    .line-info, #lp-close, #addr-clear { width: 30px; height: 30px; font-size: 15px; }
+    #sidebar-open { width: 44px; height: 44px; }
+    #sidebar-close { width: 36px; height: 36px; font-size: 20px; }
+    .station { padding-top: 9px; padding-bottom: 9px; }
+    .near { padding: 9px 4px; }
+    #suggest .sug { padding: 11px; }
+    #line-panel .lp-stop { padding-top: 8px; padding-bottom: 8px; }
+
+    /* The details popup becomes a bottom sheet rather than a floating card. */
+    #line-panel {
+      left: 8px; right: 8px;
+      top: auto; bottom: 8px;
+      width: auto;
+      max-height: 72%;
+    }
+  }
+
+  /* iOS leaves :hover stuck on whatever you tapped last. Drop the highlights
+     on touch devices — the hover label itself is gated in JS. */
+  @media (hover: none) {
+    .line-head:hover,
+    .station:hover,
+    .near:hover,
+    #suggest .sug:hover,
+    #line-panel .lp-stop:hover { background: none; }
+
+    .station:hover .a11y { color: var(--faint); }
+
+    .line-info:hover,
+    #lp-close:hover,
+    #addr-clear:hover { border-color: var(--line); color: var(--muted); }
+
+    .segmented button:not(.active):hover { color: var(--muted); }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <aside id="sidebar">
+    <header class="brand">
+      <h1 id="brand-title">Ottawa Rapid Transit</h1>
+      <p id="brand-tagline">Rail &amp; rapid bus &middot; Ottawa, Ontario</p>
+      <button id="sidebar-close" aria-controls="sidebar"
+              title="Hide the sidebar" aria-label="Hide the sidebar">&times;</button>
+    </header>
+
+    <div class="search-wrap">
+      <input id="search" type="search" placeholder="Search stations or an address…"
+             autocomplete="off" role="combobox" aria-expanded="false"
+             aria-controls="suggest" aria-autocomplete="list" />
+      <div id="suggest" role="listbox" aria-label="Address suggestions" hidden></div>
+    </div>
+
+    <div id="addr-panel" hidden></div>
+
+    <div id="lines"></div>
+
+    <footer class="note" id="site-footer"></footer>
+  </aside>
+
+  <div id="map-wrap">
+    <div id="map"></div>
+
+    <button id="sidebar-open" aria-controls="sidebar" aria-expanded="false"
+            title="Show the sidebar" aria-label="Show the sidebar">
+      <span class="bars"></span>
+    </button>
+
+    <div id="map-controls">
+      <div id="basemap" class="segmented" role="group" aria-label="Base map style">
+        <button data-type="roadmap" class="active">Map</button>
+        <button data-type="hybrid">Satellite</button>
+      </div>
+      <div id="theme" class="segmented" role="group" aria-label="Colour theme">
+        <button data-theme="light" class="active">Light</button>
+        <button data-theme="dark">Dark</button>
+      </div>
+      <div id="lang" class="segmented" role="group" aria-label="Language">
+        <button data-lang="en" class="active" lang="en">EN</button>
+        <button data-lang="fr" lang="fr">FR</button>
+      </div>
+    </div>
+
+    <div id="map-corner">
+      <div id="compass" role="img" aria-label="North is up">
+        <svg viewBox="0 0 40 40" aria-hidden="true">
+          <polygon class="north" points="20,7 25.5,22 20,19 14.5,22" />
+          <polygon class="south" points="20,33 14.5,18 20,21 25.5,18" />
+        </svg>
+        <span class="tick">N</span>
+      </div>
+
+      <!-- Line rows are generated so their names come from NETWORK rather than
+           being a second, hand-kept copy that could drift out of sync in one
+           language and not the other. -->
+      <div id="legend"></div>
+    </div>
+
+    <div id="line-panel" role="dialog" aria-label="Line details" hidden></div>
+    <div id="error"></div>
+  </div>
+</div>
+
+<script>
+/* =========================================================================
+   Network data
+
+   Station coordinates are OpenStreetMap stop nodes — the point on the track
+   where the train berths — so every dot sits on its line. See the README.
+
+   Line colours are OC Transpo's, taking the lighter of the variants they use:
+     Line 1  #DA291C  route_types/line1_empty.png badge
+     Line 2  #76BC42  Route-Icon_R2.png rail route icon
+     Line 4  #01A1DD  styles.css, their site-wide light blue
+   Their badge artwork carries darker takes on the same hues (#65A233 green,
+   #057EB6 blue); these lighter ones read closer to the printed network map.
+   Line 3 is #947200 when it opens.
+   ========================================================================= */
+
+const NETWORK = [
+  {
+    id: "line1",
+    name: "Line 1 — Confederation",
+    nameFr: "Ligne 1 — Confédération",
+    color: "#DA291C",
+    span: "Tunney's Pasture ↔ Blair",
+    // Station indices bounding the downtown tunnel — used for the label in the
+    // line popup. The dashed geometry itself comes from tunnelPaths below.
+    tunnel: [2, 6],
+    path: "k|btGf`gmMqJa\\yR{m@iGuLqH}IiAwB_EgQoD}PwAuE}@gBgAoAkHaEm@g@g@u@gc@csAu@sAcAaAqGiC{@q@k@s@aA}B{EyNc@sBIiBJiB^_B~@aBjA{@zRyJz@o@bAsAlNe\\z@cCn@uCjBwMlDcQrHcX`@o@f@c@zQuIj@q@f@mARwAB}A{@aYYuBe@gAs@q@sH}Bq@c@o@aAa@uBk@cP]yBoHsQ}A}EkEeH_@yAcCqu@_@{BiC}Eg@}Bo@qSIoNOqHa@eFqBuOc@wAq@aAaK{Is@cAm@oAc@uA_@_C_@}K_@oEs@cEs@kC}Yms@eFmI",
+    tunnelPaths: [
+      "czdtGvwbmMm@kC",
+      "w`etG~hbmMeB}AiGcDeAsAgc@csAu@sAcAaAqGiC}AyAkAiCsFyPUaCDkBd@yB~@aBjA{@`RiJ|AgA",
+      "meftGxu|lMJU",
+      "umetGfbwlM{@sB",
+      "w_ftGxotlM_CkEk@qBMgBc@}N"
+    ],
+    stations: [
+      { name: "Tunney's Pasture", lat: 45.40374, lng: -75.73524,
+        addr: "Scott St at Holland Ave", addrFr: "rue Scott, à l'avenue Holland", conn: "Bus terminal", connFr: "Terminus d'autobus",
+        alert: "Stage 2 works — the West Extension to Algonquin and Moodie ties in here", alertFr: "Travaux de l'Étape 2 — le prolongement ouest vers Algonquin et Moodie se raccorde ici" },
+      { name: "Bayview",          lat: 45.40935, lng: -75.72213, transfer: true,
+        addr: "Albert St, near Tom Brown Arena", addrFr: "rue Albert, près de l'aréna Tom-Brown", conn: "Transfer to Line 2", connFr: "Correspondance avec la Ligne 2" },
+      { name: "Pimisi",           lat: 45.41363, lng: -75.71341,
+        addr: "Booth St, LeBreton Flats", addrFr: "rue Booth, plaines LeBreton", conn: "Bus terminal", connFr: "Terminus d'autobus" },
+      { name: "Lyon",             lat: 45.41884, lng: -75.70475,
+        addr: "Queen St at Lyon St N", addrFr: "rue Queen, à la rue Lyon Nord", conn: "Underground", connFr: "Souterraine" },
+      { name: "Parliament", nameFr: "Parlement",       lat: 45.42128, lng: -75.69909,
+        addr: "Queen St at O'Connor St", addrFr: "rue Queen, à la rue O'Connor", conn: "Underground", connFr: "Souterraine" },
+      { name: "Rideau",           lat: 45.42629, lng: -75.69148,
+        addr: "Under Rideau St", addrFr: "sous la rue Rideau", conn: "Underground · Rideau Centre", connFr: "Souterraine · Centre Rideau" },
+      { name: "uOttawa",          lat: 45.42054, lng: -75.68238,
+        addr: "Somerset St E, east of the Rideau Canal", addrFr: "rue Somerset Est, à l'est du canal Rideau", conn: "University of Ottawa", connFr: "Université d'Ottawa" },
+      { name: "Lees",             lat: 45.41651, lng: -75.67093,
+        addr: "Lees Ave", addrFr: "avenue Lees" },
+      { name: "Hurdman",          lat: 45.41235, lng: -75.66424,
+        addr: "Hurdman Rd", addrFr: "chemin Hurdman", conn: "Major bus interchange", connFr: "Grand pôle d'échange d'autobus" },
+      { name: "Tremblay",         lat: 45.41675, lng: -75.65364,
+        addr: "Tremblay Rd, at VIA Rail Ottawa station", addrFr: "chemin Tremblay, à la gare VIA Rail d'Ottawa", conn: "VIA Rail Ottawa station", connFr: "Gare VIA Rail d'Ottawa" },
+      { name: "St-Laurent",       lat: 45.42063, lng: -75.63738,
+        addr: "St. Laurent Blvd at the Queensway", addrFr: "boulevard St-Laurent, au Queensway", conn: "St. Laurent Centre", connFr: "Place St-Laurent" },
+      { name: "Cyrville",         lat: 45.42266, lng: -75.62629,
+        addr: "Cyrville Rd, near the Queensway", addrFr: "chemin Cyrville, près du Queensway" },
+      { name: "Blair",            lat: 45.43113, lng: -75.60842,
+        addr: "Blair Rd at Ottawa Rd 174", addrFr: "chemin Blair, à la route 174", conn: "Bus terminal · Park & Ride", connFr: "Terminus d'autobus · Parc-O-Bus",
+        alert: "Stage 2 works — the East Extension to Trim ties in here", alertFr: "Travaux de l'Étape 2 — le prolongement est vers Trim se raccorde ici" }
+    ]
+  },
+  {
+    id: "line2",
+    name: "Line 2 — Trillium",
+    nameFr: "Ligne 2 — Trillium",
+    color: "#76BC42",
+    span: "Bayview ↔ Limebank",
+    path: "q`dtGxodmMnKgQ`DqElGaLvC{EdEmGhBuBrCaCjBmAnGoDjZqOvDsCdDuDfDqFxAaDx@cCxB_JvFySlBoErB{CtCiCfAq@rAm@dEgAnBK|Mb@|C]lCkAbHeEpAgAbAmAfAsBp@oB~Tyu@fDmMlHqVvDmKnR}o@hBeEtBqDxHeKrDyDdCcBjjAoj@lo@i\\~x@ia@x_C_lAhYcNpI_D~G_B~G}@bZwBlKg@~WuBrABbBZjAj@tAhAr@~@bAxBbQbl@`ClFlHtLhA`CdBtErWb{@z@~DlAdIbAzDhAdC~@xAnHnHrAlBt@zA`Uts@",
+    tunnelPaths: [
+      "a{`tGpfamM`BgEdC_KvFyS",
+      "ub`tGzq_mMjAaA"
+    ],
+    stations: [
+      { name: "Bayview",       lat: 45.40935, lng: -75.72213, transfer: true,
+        addr: "Albert St, near Tom Brown Arena", addrFr: "rue Albert, près de l'aréna Tom-Brown", conn: "Transfer to Line 1", connFr: "Correspondance avec la Ligne 1" },
+      { name: "Corso Italia",  lat: 45.40400, lng: -75.71437,
+        addr: "North of Gladstone Ave, near Preston St", addrFr: "au nord de l'avenue Gladstone, près de la rue Preston" },
+      { name: "Dow's Lake", nameFr: "Lac Dow",    lat: 45.39736, lng: -75.70948,
+        addr: "Carling Ave, one block west of Preston St", addrFr: "avenue Carling, un coin de rue à l'ouest de la rue Preston", conn: "Carling Ave", connFr: "Avenue Carling" },
+      { name: "Carleton",      lat: 45.38560, lng: -75.69595,
+        addr: "Carleton University campus", addrFr: "campus de l'Université Carleton", conn: "Carleton University", connFr: "Université Carleton" },
+      { name: "Mooney's Bay",  lat: 45.37686, lng: -75.68489,
+        addr: "Near Heron Rd and Bronson Ave", addrFr: "près du chemin Heron et de l'avenue Bronson" },
+      { name: "Walkley",       lat: 45.36866, lng: -75.66574,
+        addr: "Walkley Rd, between Airport Pkwy and Bank St", addrFr: "chemin Walkley, entre la promenade de l'Aéroport et la rue Bank" },
+      { name: "Greenboro",     lat: 45.35955, lng: -75.65910,
+        addr: "Bank St at Johnston Rd", addrFr: "rue Bank, au chemin Johnston", conn: "Bus terminal · Park & Ride", connFr: "Terminus d'autobus · Parc-O-Bus" },
+      { name: "South Keys",    lat: 45.35329, lng: -75.65548, transfer: true,
+        addr: "Behind South Keys Shopping Centre, off Bank St", addrFr: "derrière le centre commercial South Keys, près de la rue Bank", conn: "Transfer to Line 4", connFr: "Correspondance avec la Ligne 4" },
+      { name: "Leitrim",       lat: 45.31414, lng: -75.63212,
+        addr: "Gilligan Rd, Leitrim", addrFr: "chemin Gilligan, Leitrim", conn: "Park & Ride", connFr: "Parc-O-Bus" },
+      { name: "Bowesville",    lat: 45.29340, lng: -75.63267,
+        addr: "Bowesville Rd at Earl Armstrong Rd", addrFr: "chemin Bowesville, au chemin Earl Armstrong", conn: "Park & Ride", connFr: "Parc-O-Bus" },
+      { name: "Limebank",      lat: 45.27755, lng: -75.66654,
+        addr: "Limebank Rd at Earl Armstrong Rd", addrFr: "chemin Limebank, au chemin Earl Armstrong", conn: "Riverside South", connFr: "Riverside-Sud" }
+    ]
+  },
+  {
+    id: "line4",
+    name: "Line 4 — Airport Link",
+    nameFr: "Ligne 4 — Liaison aéroport",
+    color: "#01A1DD",
+    span: "South Keys ↔ Airport",
+    path: "aaysGvmwlMn}@ed@zBc@hBGx@D`Cb@`g@zUxBdBhAzAr@tAvGpS~ClKtBxJbAlD`AbCbLtUhAzAxAxA|@l@zBbArDj@zJ`@",
+    stations: [
+      { name: "South Keys",   lat: 45.35329, lng: -75.65548, transfer: true,
+        addr: "Behind South Keys Shopping Centre, off Bank St", addrFr: "derrière le centre commercial South Keys, près de la rue Bank", conn: "Transfer to Line 2", connFr: "Correspondance avec la Ligne 2" },
+      { name: "Uplands",      lat: 45.33298, lng: -75.65591,
+        addr: "Uplands Dr, at the EY Centre", addrFr: "promenade Uplands, au Centre EY" },
+      { name: "Airport", nameFr: "Aéroport",      lat: 45.32363, lng: -75.66876,
+        addr: "Ottawa Macdonald–Cartier airport terminal", addrFr: "aérogare de l'aéroport Macdonald-Cartier d'Ottawa",
+        conn: "Ottawa Macdonald–Cartier Intl (YOW)", connFr: "Aéroport international Macdonald-Cartier d'Ottawa (YOW)" }
+    ]
+  }
+];
+
+// Recentred after the coordinate correction — Line 2's south end sits ~1.5 km
+// further south than the old approximate data had it.
+// Integer zoom on purpose: without a map ID the map renders as raster tiles,
+// which don't support fractional zoom — 11.4 silently became 11.
+/* =========================================================================
+   Stage 2 — under construction
+
+   Not yet open, so it lives apart from NETWORK: nothing here should reach the
+   sidebar station lists, the search index, or the nearest-station maths.
+
+   Sourced from OpenStreetMap (railway=construction), with the branch topology
+   checked against OC Transpo's own Stage 2 west map. West of Tunney's Pasture
+   the two lines share a trunk to Lincoln Fields and split there: Line 1 turns
+   south for Iris and Algonquin, Line 3 carries on west through Bayshore to
+   Moodie. The shared trunk is drawn once, with Line 1, rather than as two
+   overlapping dashed lines.
+
+   The East Extension is mapped too, but as railway=light_rail rather than
+   railway=construction — worth knowing if you re-query, because filtering on
+   construction alone finds a 40 m stub and misses the other 12 km.
+   ========================================================================= */
+
+const FUTURE = [
+  {
+    id: "f-west1",
+    name: "Line 1 — West Extension",
+    nameFr: "Ligne 1 — prolongement ouest",
+    note: "Tunney's Pasture → Algonquin",
+    color: "#DA291C",
+    path: "yybtGjfgmM`HlS`Xjz@zHpWzFlPnFnLzJrP~m@ns@r@p@pBfAlHhBrAx@h_@b`@tOzNfRtSpAjAz@^tAJvOQuBU|Vs@nLaA|A_Ap@eAx@oBb@aCDqD_AkKAcGj@_Gj@_CpAmDvDqEnPgIdI{FbBiBzK_QdMcOjB}ArP}I",
+    stations: [
+      { name: "Westboro", lat: 45.39661, lng: -75.75213 },
+      { name: "Kichì Zìbì", lat: 45.39258, lng: -75.75972 },
+      { name: "Sherbourne", lat: 45.38104, lng: -75.77114 },
+      { name: "New Orchard", lat: 45.37467, lng: -75.77754 },
+      { name: "Lincoln Fields", lat: 45.36604, lng: -75.78197 },
+      { name: "Iris", lat: 45.35551, lng: -75.76953 },
+      { name: "Algonquin", lat: 45.34742, lng: -75.76122 }
+    ]
+  },
+  {
+    id: "f-line3",
+    name: "Line 3 — Moodie branch",
+    nameFr: "Ligne 3 — embranchement Moodie",
+    note: "Lincoln Fields → Moodie",
+    color: "#947200",
+    path: "cn{sGhdpmMrIc@nd@wDjKgB~@@hAZnA`Al@|@nQp`@nApDxA~FfA~CtDbH|E~HfEhJvBfIrA|J`@jJ@`P`Dnm@zCpXhCxRp@hJzBjd@`AxJtHhm@x@nNFdC",
+    stations: [
+      { name: "Queensview", lat: 45.35404, lng: -75.78219 },
+      { name: "Pinecrest", lat: 45.34960, lng: -75.79084 },
+      { name: "Bayshore", lat: 45.34546, lng: -75.80953 },
+      { name: "Moodie", lat: 45.34087, lng: -75.83739 }
+    ]
+  },
+  {
+    id: "f-east",
+    name: "Line 1 — East Extension",
+    nameFr: "Ligne 1 — prolongement est",
+    note: "Blair → Trim",
+    color: "#DA291C",
+    path: "{jhtGvbnlMs@u@mDiBm@s@kAwBs@_DSyGWoBaKqYaCoMwFwLeDmF{CcE{GeHyIwG{l@u\\yDeCwLoG}CsB_D{CcByBcBkCgBwD{H_V}H}W{oAcpEwH_Yka@_vAah@yiB{EcOsf@qtAoLu]",
+    stations: [
+      { name: "Montréal", lat: 45.45105, lng: -75.58378 },
+      { name: "Jeanne-d'Arc", lat: 45.46894, lng: -75.54621 },
+      { name: "Convent Glen", lat: 45.47358, lng: -75.53408 },
+      { name: "Place-d'Orléans", lat: 45.47947, lng: -75.51915 },
+      { name: "Trim", lat: 45.49538, lng: -75.48155 }
+    ]
+  }
+];
+
+/* =========================================================================
+   Rapid bus corridors — 8 corridors, 122 km
+
+   Three kinds of source, all from OpenStreetMap, which is why the shapes
+   differ in character:
+
+   - Whole bus routes (57, 74), stitched from their route relation's member
+     ways in stored order. Order matters: tracing a shortest path between the
+     endpoints instead cuts any loop the route makes to serve a station.
+   - Transitway proper — segments tagged highway=service with name=Transitway
+     and operator=OC Transpo, reduced to one spine per component.
+   - Named sections of a single route, sliced out of one direction's relation
+     and trimmed at a station: the 61's spur into Terry Fox, the 63 from Moodie
+     out to Innovation, the 34 from Chapel Hill to Blair, the 39 from Millennium
+     to Blair, the 75 from Baseline to Minto. Take these from ONE direction's
+     relation — stitching both gives a doubled path, since the two directions
+     use different ways along divided road.
+
+     And check the route goes where you think before drawing it: the 24 looks
+     like an Orléans route by name but runs Blair to St-Laurent via Ogilvie,
+     5.7 km clear of Chapel Hill. The 34 is the one that serves it.
+
+   All of it then goes through one cleanup pass, in this order — the order is
+   the part that's easy to get wrong:
+
+     1. smooth each corridor alone: drop out-and-back excursions under 350 m
+        that return within 45 m of where they left, then simplify at 8 m;
+     2. THEN snap, most-routes-first, replacing any vertex within 60 m of an
+        already-finalised corridor with its projection onto that corridor.
+
+   Snapping before simplifying looks equivalent and isn't: the later simplify
+   moves each corridor's vertices independently and pulls the shared stretch
+   apart again. Done in this order the overlapping runs share actual vertices,
+   so four pairs of corridors that used to draw 0-40 m apart — up to 7.5 km at
+   a time, reading as double and triple lines — now draw a mean 2.6-5.9 m apart
+   against a 1.6 px stroke, i.e. as one line. 626 vertices down to 425, and no
+   corridor more than 45 m off its true alignment.
+
+   Note the tagging: the Transitway is NOT highway=busway. Querying busway in
+   an Ottawa bounding box returns Gatineau's Rapibus instead — a different
+   agency across the river — which is a convincing-looking wrong answer if you
+   don't check where the coordinates land.
+
+   Each entry's `routes` lists the services sharing that corridor, computed by
+   intersecting its ways against every OC Transpo bus route relation and
+   keeping those covering 90%+ of it. The cutoff matters: without it a route
+   that borrows one way of a 99-way corridor is listed as running the whole
+   thing. Both new sections show a clean cliff at that line — the 61 spur goes
+   94% to 33%, the 63 section 100% to 28%.
+
+   Then sieved against the GTFS feed, keeping only routes that still have trips
+   in it. That caught 155, 251, 284 and 167 — routes OSM still carries but
+   OC Transpo no longer runs, which were rendering as chips linking to a
+   schedule for a route that doesn't exist. Re-run that sieve whenever the
+   route lists are regenerated; OSM lags service changes by months.
+   ========================================================================= */
+
+const TRANSITWAY = [
+  { path: "mcnsGndenMgYh^yGnDuTnDsNjMyg@wu@[aLtFkRBcMgW|KgAsD_FyBsAlGmBeAiMa^ooA{dE_DwPjAsNa@cFyJsEiGiNoDmQwGik@oB_d@pA_s@wAgDsFsCwChOq@n@m@o@u@oO_AuAw\\suBl@e@uCiFjQ_Iz@f@ChF{B|BcB}@}DgHk{@oiBwDvJu@pKhAbTqAjGqCfE{Y|GsF[iOD{OtLgI}AeCuDwE}PeD}FuMwFaHwG{K_FeB{EaBuUsBeH}IgIoGyLeIoF}Ya^ccAquC", routes: ["11", "57", "58", "61", "62", "63", "66", "82", "87", "153", "173", "256", "261", "262", "263", "265", "275", "283", "301", "303"] },
+  { path: "q|btGncgmMzCxI`@hAz|@vgCfZv^dInFnGxL|IfIrBdHpBvVlBfEzb@`VdDzFpF`RlG`EbG[tOkJdTVxJ}BxKgCvCcC`CkHc@mZpDgP~D}EbNcGqGqWzk@kX|NuM`jCgpA~Cb@|iCeqAnIPlVxSNwA_DeLt@_CyEkQxvCmsA_CgKiHE`@yInEoLpOcLvDwFjNqv@`@gIsBmNys@{zBwH_a@zQuJqA_G", routes: ["11", "66", "73", "74", "75", "80", "82", "84", "86", "87", "99", "153", "173", "187", "275", "277", "305"] },
+  { path: "qlxsG|~vlMin@b[eUpIiCjH}AfC{OhJuNnMqLtOwAxCiXv|@{BfDcDxAoGIqIyAqF{AkGkDaFj@qB[qe@ci@iHgFcSsHkE`EmBFyLmFyEeD}HuCeSiLsDwA}VkBuVA", routes: ["2", "6", "10", "40", "44", "48", "49", "88", "90", "92", "93", "98", "99", "294", "299", "304"] },
+  /* The 61's spur off the Transitway into Terry Fox station, via Castlefrank
+     and Lord Byng. Without it the station sat 630 m off the end of anything
+     drawn, reading as a dot floating on its own. Sliced from relation 10092723
+     (61: Tunney's Pasture → Terry Fox) between its last point still on the
+     corridor above and the station itself. 1.1 km. */
+  { path: "ykpsGd}fnMeR~`@oA|FhEHdBsBvBxEnAGdCzE", routes: ["61", "62", "88", "161", "162", "301", "303"] },
+
+  /* The 63 from Moodie through Teron to Innovation, sliced from relation
+     10094545 (63: Tunney's Pasture → Innovation) and trimmed at Innovation
+     station. 11.6 km, and the 63's alone — no other route covers more than a
+     third of it. Its west end lands 27 m from the Stage 2 Moodie station, so
+     the two meet on screen when that layer is on. */
+  { path: "}qvsGh~zmMOvQVfHxGj@xBbBxNrXnlAz~DzBnRh@vE|@~t@u@fCgBtAc}@nrAwBdCeC]mAnGuA~C_SlW}@o@@iA~BsHZ{IcB_]cFhAkCdC_B~BbCrF`@dC@|C]nCaCjGoF~LeKfOaCvIgArB}R`YiDzBaBFq@fLNfCp@tB`Z`i@hAaBvBoA|Hp@NxBgCdG", routes: ["63"] },
+
+  /* The 39 from Millennium in to Blair, the long way round through the Orléans
+     streets it actually serves — Valin, Springridge, Portobello, Trim — then
+     Place d'Orléans and Regional Road 174. Sliced from relation 10133520
+     (39: Millennium → Blair) and trimmed at both stations. 21.6 km, the 39's
+     alone; the next route covers 41% of it.
+
+     Two runs joining at 0 m, so the join is invisible but the stitch still
+     reports a break. Long hops (to 524 m) are RR 174's sparse nodes again. */
+  { path: "e_otGr`okMyBdAtBtK}NtJ_NbGsIgf@gIrCgB`CcDhVAlCpAtCdDnAlBbBvFzLlBnGd@fISdEq@|DqLp^wBtKkBWkC}BmHcPcDyEkNcHkBAkB|AkBxCg@dBEfB\\jBhDxHrDvEmIpO_HrI{]rXqANoA|AoKzHgADoPzKc@Ka@aB}@yJ`@aAFgB_D`@sEzEvDxGrOha@xm@zdB~Vt|@vCfMXxEa@lHl@rElLqFlD~M{AYwCkLkJhEpAfG~CqAdPdd@pg@biBlAxHw@pIHdAbAjBvDpBvAjBbJ`Xzt@niCjMja@nGrLpHjI~BfHj@r@dBXfEoA~RnJjd@fWpFpEnFbGpFxHtE|IvLrXjFdOd@xBDpBmA`M`CjKhAxAbBoFzDdG", routes: ["39"] },
+
+  /* The 34 from Chapel Hill in to Blair, via Jeanne d'Arc and Regional Road
+     174. Sliced from relation 10153046 (34: Renaud → Blair) and trimmed at
+     both stations. 15.5 km, the 34's alone.
+
+     That relation stitches into three runs rather than one, and they are not
+     in sequence: the chain is run 0 → run 2 → run 1, joining at 2 m and 0 m.
+     Taken in stored order it looks like a 795 m gap and an unusable route.
+     When a stitch breaks, check whether a later run continues an earlier one
+     before concluding the geometry is missing.
+
+     The long straight hops through here — up to 406 m between points — are
+     real: RR 174 is mapped with few nodes across its gentle curves, not
+     broken. */
+  { path: "_uhtGhp}kMzDfHsDfVyA~S{CiAeNmU_DoBU|Me@dBcAbAgKlFaCJu@QoAuAcByHmCtE_CtHyApB{JdDwCdCiJvEeDn@}EQmCw@yCqB{BcCoBkDiBqF{DsTkFgPaD_DiEk@kd@jO}\\fQ}VfUiOxE_GtDzEbMpNtMrGfVFnBa@hBeElCwA`DIbBb@zDhJyBbCaBjCvAvAjBnLf^~w@npCzFzQfB|DfE~HpHjI~BfHj@r@dBXfEoA~RnJjd@fWpFpEnFbGpFxHtE|IvLrXjFdOd@xBDpBmA`M`CjKhAxAbBoFzDdG", routes: ["34"] },
+
+  /* The 75 from Baseline down through Barrhaven to the Minto Rec Centre,
+     sliced from relation 10073594 (75: Tunney's Pasture → Cambrian). 16.8 km,
+     serving all five Barrhaven stations added below.
+
+     Two things about the Minto end. The stop is named "Centre Minto Rec.
+     Centre", and it sits on the relation with role platform_entry_only /
+     platform_exit_only rather than plain platform — filter on `role == platform`
+     and the terminus vanishes from the stop list entirely. The geometry also
+     arrives as runs 2 → 3 → 4 rather than one run, joining at 25 m and 6 m.
+
+     Long hops here (up to 510 m) are the Transitway's sparse nodes down a
+     straight, not gaps. */
+  { path: "c|wsGtelmM~PsJ}AcIdcA{f@`o@a[|Hw@jl@yYd_Bgv@`CFhCRzJnI`JzHrGdIrrAr~@~B`AvBPzEs@zh@eVv]oVlEQzDqBrBjG|Pkn@fL{MvMoNlKaIrHbR`IiG~J_NrO}GlG}E|AuEn@}Kv@sAhAs@`HQ|AtAxGfVR|AItJ\\pDlA~FlHlVcYrMiAjBmc@|[mKc^A}@hAqAvDwB{@cEs@yA", routes: ["75"] }
+];
+
+/* Major transit stations — the black-and-white circles on OC Transpo's own
+   system map. Rail and Stage 2 stations are excluded because they are already
+   drawn; what is left is the bus network's own interchanges.
+
+   Coordinates are the point on the drawn corridor nearest OC Transpo's own
+   published coordinate for the station — so every dot sits ON its line, all 30
+   within 0.5 m. Same rule as the rail, which uses OSM `stop` nodes (where the
+   train berths) rather than station centroids for exactly this reason.
+
+   A bus station's published coordinate is the centroid of a platform cluster
+   set back from the road, up to 126 m off the corridor. Projecting it onto the
+   line moves the stored coordinate by that much, and the directions links and
+   address-search distances use it — a block's error at worst, against a dot
+   that visibly missed its line.
+
+   The published figures come from the GTFS station entries (location_type=1),
+   the same source as STATION_ROUTES below. Before that they were the median of
+   each station's OSM platform nodes, which is a fiddlier rule than it looks: a
+   station bay is named "<Station> <bay>" (Teron 1A, Innovation B) while an
+   on-street stop is "<Street> / <Cross street>", and a median over everything
+   whose name merely STARTS with the station name sweeps in every stop on a road
+   of the same name — that put Teron 858 m up Teron Drive and Innovation 332 m
+   along Innovation Drive. */
+const TRANSIT_STATIONS = [
+  { name: "Millennium", lat: 45.46563, lng: -75.44858 },
+
+  /* Stage 2 stations that are already bus stations today, so they belong to
+     both layers: the four along the East Extension here, and Moodie further
+     down the list at the west end of the 63.
+
+     Names match the FUTURE entries character for character — the label overlay
+     de-duplicates by name, and "Place d'Orléans" here against
+     "Place-d'Orléans" there would print the same station twice.
+
+     Montréal is the odd one: OC Transpo publishes no station for it, only a
+     stop pair on Montréal Rd at R.R. 174 (codes 1920 and 2461). That pair sits
+     where the Stage 2 station is being built, and nine routes call there, so
+     it earns a dot — but it is a stop pair, not a designated station. */
+  { name: "Trim", lat: 45.49516, lng: -75.48009, stage2: true },
+  { name: "Place-d'Orléans", lat: 45.47829, lng: -75.51922, stage2: true },
+  { name: "Jeanne-d'Arc", lat: 45.46928, lng: -75.54710, stage2: true },
+  { name: "Montréal", lat: 45.45113, lng: -75.58477, stage2: true },
+
+  { name: "Chapel Hill", lat: 45.43314, lng: -75.52299 },
+  { name: "Lycee Claudel", lat: 45.40662, lng: -75.66439 },
+  { name: "Smyth", lat: 45.40116, lng: -75.66667 },
+  { name: "Riverside", lat: 45.39673, lng: -75.66931 },
+  { name: "Pleasant Park", lat: 45.39282, lng: -75.66950 },
+  { name: "Dominion", lat: 45.39223, lng: -75.76055 },
+  { name: "Billings Bridge", lat: 45.38473, lng: -75.67648 },
+  { name: "Heron", lat: 45.37889, lng: -75.67963 },
+  { name: "Queensway", lat: 45.35907, lng: -75.77207 },
+  { name: "Baseline", lat: 45.34730, lng: -75.76166 },
+  { name: "Innovation", lat: 45.34295, lng: -75.93197 },
+  { name: "Moodie", lat: 45.33963, lng: -75.84196, stage2: true },
+  { name: "Teron", lat: 45.32253, lng: -75.88931 },
+  { name: "Terry Fox", lat: 45.30948, lng: -75.90647 },
+  { name: "Eagleson", lat: 45.31841, lng: -75.88399 },
+  { name: "Fallowfield", lat: 45.29877, lng: -75.73589 },
+  { name: "Longfields", lat: 45.28532, lng: -75.74691 },
+  { name: "Strandherd", lat: 45.27363, lng: -75.74578 },
+  { name: "Marketplace", lat: 45.26963, lng: -75.74279 },
+  { name: "Barrhaven Centre", lat: 45.26692, lng: -75.74149 },
+  { name: "Nepean Woods", lat: 45.27453, lng: -75.71722 },
+  { name: "Riverview", lat: 45.26967, lng: -75.69549 },
+  { name: "Greenboro", lat: 45.35990, lng: -75.65871, shared: true },
+  { name: "Hurdman", lat: 45.41199, lng: -75.66416, shared: true },
+  { name: "Limebank", lat: 45.27707, lng: -75.66708, shared: true },
+  { name: "South Keys", lat: 45.35369, lng: -75.65530, shared: true },
+  { name: "Tunney's Pasture", lat: 45.40353, lng: -75.73630, shared: true },
+  { name: "Walkley", lat: 45.36863, lng: -75.66700, shared: true },
+  { name: "Lincoln Fields", lat: 45.36653, lng: -75.78317, shared: true },
+  { name: "Bayshore", lat: 45.34564, lng: -75.81078, shared: true }
+];
+
+/* The rapid bus network answers the address search as a single pseudo-line.
+   Its corridors have no individual identity — a stretch of Transitway is
+   shared by 22 routes — so "which corridor" is not a question a rider asks;
+   "how far to a rapid bus station" is. Shaped like a NETWORK entry so the
+   nearest-station code path doesn't need to know the difference, minus the
+   fixed `color`: this one is theme-dependent, hence lineColour() below. */
+const TRANSITWAY_LINE = { id: "transitway", name: "Rapid bus", isTransitway: true };
+
+/* Which routes call at each rapid-bus station.
+
+   From OC Transpo's own GTFS feed, NOT from OpenStreetMap — the one dataset on
+   this page that doesn't come from OSM, and deliberately so. A route calls at a
+   station here iff some trip in the published schedule stops at a platform
+   whose parent_station is that station. That is the operator's own answer, and
+   it disagreed with the OSM route relations at 27 of the 31 stations: OSM had
+   Innovation at 2 routes where the real number is 4, Limebank at 1 where it is
+   9, and still listed 155, 251 and 284 — routes with zero trips in the current
+   schedule, i.e. discontinued.
+
+   Filtered to regular bus service, which is what a station listing means:
+   route_type 3 only (so the O-Train lines don't appear on bus stations), minus
+   the 400s (Lansdowne event shuttles), the 600s (school specials) and 940.
+   Keep that filter if you regenerate — with the 600s left in, Innovation reads
+   as 7 routes and matches nothing OC Transpo publishes.
+
+   The feed is a snapshot with an expiry (feed_info.txt carries the window), so
+   this table ages. See the README for how to rebuild it. */
+const STATION_ROUTES = {
+  "Millennium": ["25", "30", "39"],
+  "Trim": ["38", "39", "139", "221"],
+  "Moodie": ["57", "60", "61", "62", "63", "66", "67", "261", "262", "263", "265", "266", "301", "303"],
+  "Place-d'Orléans": ["31", "32", "33", "35", "36", "38", "39", "138", "139", "221", "234", "237", "302"],
+  "Jeanne-d'Arc": ["30", "31", "32", "33", "34", "35", "38", "39", "138", "234", "237"],
+  "Montréal": ["21", "24", "30", "32", "33", "34", "35", "38", "39"],
+  "Chapel Hill": ["24", "32", "34", "226", "228"],
+  "Lycee Claudel": ["10", "45", "49", "88", "90", "92", "98", "105", "110"],
+  "Smyth": ["10", "49", "88", "90", "92", "98", "105", "110"],
+  "Riverside": ["10", "49", "88", "90", "92", "98", "105", "110"],
+  "Pleasant Park": ["10", "49", "88", "90", "92", "98", "105", "110"],
+  "Dominion": ["57", "58", "60", "61", "62", "63", "66", "67", "73", "74", "75", "82", "87", "256", "261", "262", "263", "265", "266", "275", "277", "279"],
+  "Billings Bridge": ["6", "10", "18", "41", "44", "48", "88", "90", "92", "98", "105", "110", "111", "112", "304"],
+  "Heron": ["10", "44", "88", "90", "98", "105", "110", "111", "112", "304"],
+  "Queensway": ["73", "74", "75", "256", "261", "262", "263", "265", "266", "275", "277", "279", "301", "303", "305"],
+  "Baseline": ["53", "68", "73", "74", "75", "82", "84", "87", "88", "111", "112", "116", "117", "187", "189", "275", "277", "279", "305"],
+  "Innovation": ["63", "66", "110", "165"],
+  "Teron": ["62", "63", "110", "161", "162", "168", "265"],
+  "Terry Fox": ["60", "61", "62", "67", "68", "161", "162", "163", "165", "168", "265", "301", "303"],
+  "Eagleson": ["60", "61", "62", "63", "67", "110", "161", "168", "265", "301", "303"],
+  "Fallowfield": ["70", "73", "74", "75", "173", "275", "277", "279", "305"],
+  "Longfields": ["75", "173", "275", "279", "305"],
+  "Strandherd": ["70", "75", "173", "275", "279", "305"],
+  "Marketplace": ["70", "75", "80", "99", "110", "173", "275", "279", "305"],
+  "Barrhaven Centre": ["70", "75", "80", "99", "110", "173", "275", "279", "305"],
+  "Nepean Woods": ["70", "74", "80", "99", "110", "277"],
+  "Riverview": ["70", "73", "74", "99", "110", "198", "283"],
+  "Greenboro": ["6", "40", "43", "90", "92", "98", "105", "110", "116", "117", "197", "198", "294", "304"],
+  "Hurdman": ["9", "10", "19", "39", "42", "44", "45", "48", "49", "88", "90", "92", "98", "105", "110"],
+  "Limebank": ["70", "73", "74", "99", "105", "110", "198", "283", "299"],
+  "South Keys": ["6", "40", "43", "90", "92", "98", "105", "110", "116", "117", "197", "198", "294", "304"],
+  "Tunney's Pasture": ["11", "12", "13", "14", "51", "53", "56", "57", "58", "60", "61", "62", "63", "66", "67", "73", "74", "75", "80", "81", "82", "86", "87", "256", "261", "262", "263", "265", "266", "275", "277", "279"],
+  "Walkley": ["44", "90", "92", "98", "105", "110", "304"],
+  "Lincoln Fields": ["11", "51", "57", "58", "60", "61", "62", "63", "66", "67", "73", "74", "75", "82", "85", "153", "256", "261", "262", "263", "265", "266", "275", "277", "279", "301", "303", "305"],
+  "Bayshore": ["11", "57", "58", "60", "61", "62", "63", "66", "67", "81", "85", "88", "158", "301", "303"]
+};
+
+
+
+const DEFAULT_VIEW = { center: { lat: 45.353, lng: -75.672 }, zoom: 11 };
+
+/* =========================================================================
+   Bilingual
+
+   Ottawa is officially bilingual and OC Transpo publishes everything twice, so
+   the map does too. English is the default and lives on the bare key; French
+   falls back to it, which means a missing translation degrades to English text
+   rather than to the key name.
+
+   Switching RELOADS the page, and that is the whole reason this file has no
+   re-render pass. The Maps JS API fixes its label language when the script
+   loads — there is no setter — so leaving the basemap in English while the
+   sidebar turned French would be a half-translated map. Reloading costs a
+   pinned address and the current pan/zoom; it buys street and place names in
+   the right language. Because every render happens after load, t() is only
+   ever read once per string and nothing needs re-rendering.
+
+   Station NAMES are identity here, not display text: they key stationIndex,
+   STATION_ROUTES, the label de-duplicator and every data-station attribute.
+   So `name` stays English everywhere and `nameFr` is display-only, read
+   through stationName(). Only three stations on this map differ at all.
+   ========================================================================= */
+
+const STRINGS = {
+  en: {
+    title: "Ottawa Rapid Transit",
+    tagline: "Rail &amp; rapid bus &middot; Ottawa, Ontario",
+    hideSidebar: "Hide the sidebar",
+    showSidebar: "Show the sidebar",
+    searchPlaceholder: "Search stations or an address…",
+    suggestions: "Address suggestions",
+    footerHelp: "Click a line header to expand its stations. Toggle switches show/hide lines on the map.",
+    footerAlignment: "Track alignment",
+    footerContributors: "contributors.",
+    footerRoutes: "Route and schedule data from",
+    basemapGroup: "Base map style",
+    map: "Map",
+    satellite: "Satellite",
+    themeGroup: "Colour theme",
+    light: "Light",
+    dark: "Dark",
+    langGroup: "Language",
+    northIsUp: "North is up",
+    north: "N",
+    legend: "Legend",
+    undergroundSection: "Underground section",
+    rapidBusRoute: "Rapid bus route",
+    underConstruction: "Under construction (Stage 2)",
+    accessibleAll: "Wheelchair accessible — all stations",
+    lineDetails: "Line details",
+    close: "Close",
+    closeLineDetails: "Close line details",
+    stations: "Stations",
+    length: "Length",
+    avgSpacing: "Avg spacing",
+    transfers: "Transfers",
+    none: "None",
+    underground: "Underground",
+    connectsWith: "Connects with",
+    at: "at",
+    allStopsAccessible: "All stops wheelchair accessible",
+    from: "From",
+    nearestIs: "nearest is",
+    detailsFor: name => `${name} details`,
+    showHideOnMap: "Show/hide on map",
+    transfer: "transfer",
+    rail: "rail",
+    stage2Tag: "Stage 2",
+    noRouteData: "no route data",
+    rapidBusRoutes: "Rapid bus routes",
+    frequentCorridors: n => `Frequent bus corridors &middot; ${n} stations`,
+    showHideRapidBus: "Show/hide the rapid bus routes",
+    underConstructionCard: "Under construction",
+    stage2Stations: n => `Stage 2 &middot; ${n} future stations`,
+    showHideWip: "Show/hide work in progress",
+    routeNotMapped: " &middot; route not yet mapped",
+    rapidBusStation: "Rapid bus station",
+    servedByRoutes: n => `Served by ${n} routes`,
+    routesUnavailable: "Route list unavailable for this section",
+    routeSchedule: r => `Schedule and route map for ${r}`,
+    transitDirections: "Transit directions",
+    walking: "Walking",
+    openInMaps: "Open in Maps",
+    elevatorAlerts: "Elevator alerts",
+    checkAlerts: "Check today's alerts",
+    forClosures: "for closures and detours.",
+    clearAddress: "Clear address",
+    hidden: " &middot; hidden",
+    minWalk: n => `~${n} min walk`,
+    straightLine: "Straight-line distance; walk times are rough estimates.",
+    rapidBus: "Rapid bus",
+    authFileTitle: "Google Maps rejected this page because it was opened as a",
+    authFileBody: `URL.<br><br>
+      Referrer restrictions can't match a file path. Serve the folder over HTTP
+      — <code>python3 -m http.server 8000</code> — and open
+      <code>http://localhost:8000</code>.`,
+    authOriginTitle: o => `Google Maps rejected the API key for <code>${o}</code>.<br><br>`,
+    authOriginBody: o => `Most often this origin isn't on the key's allowlist. Add
+      <code>${o}/*</code> under <strong>Credentials → your key →
+      Website restrictions</strong> in the Cloud console.<br><br>
+      Otherwise check that <code>config.js</code> holds a valid key and that the
+      <strong>Maps JavaScript API</strong> is enabled on it.`,
+    loadFailed: "Failed to load Google Maps: "
+  },
+
+  fr: {
+    title: "Transport rapide d'Ottawa",
+    tagline: "Train léger et autobus rapide &middot; Ottawa (Ontario)",
+    hideSidebar: "Masquer le panneau",
+    showSidebar: "Afficher le panneau",
+    searchPlaceholder: "Rechercher une station ou une adresse…",
+    suggestions: "Suggestions d'adresses",
+    footerHelp: "Cliquez sur l'en-tête d'une ligne pour afficher ses stations. Les interrupteurs affichent ou masquent les lignes sur la carte.",
+    footerAlignment: "Tracé des voies",
+    footerContributors: "et ses contributeurs.",
+    footerRoutes: "Données d'itinéraires et d'horaires d'",
+    basemapGroup: "Type de carte",
+    map: "Carte",
+    satellite: "Satellite",
+    themeGroup: "Thème de couleur",
+    light: "Clair",
+    dark: "Sombre",
+    langGroup: "Langue",
+    northIsUp: "Le nord est en haut",
+    north: "N",
+    legend: "Légende",
+    undergroundSection: "Section souterraine",
+    rapidBusRoute: "Circuit d'autobus rapide",
+    underConstruction: "En construction (Étape 2)",
+    accessibleAll: "Accessible en fauteuil roulant — toutes les stations",
+    lineDetails: "Détails de la ligne",
+    close: "Fermer",
+    closeLineDetails: "Fermer les détails de la ligne",
+    stations: "Stations",
+    length: "Longueur",
+    avgSpacing: "Espacement moyen",
+    transfers: "Correspondances",
+    none: "Aucune",
+    underground: "Souterrain",
+    connectsWith: "Correspondance avec",
+    at: "à",
+    allStopsAccessible: "Toutes les stations sont accessibles en fauteuil roulant",
+    from: "De",
+    nearestIs: "la plus proche est",
+    detailsFor: name => `Détails de ${name}`,
+    showHideOnMap: "Afficher ou masquer sur la carte",
+    transfer: "correspondance",
+    rail: "train",
+    stage2Tag: "Étape 2",
+    noRouteData: "aucune donnée de circuit",
+    rapidBusRoutes: "Circuits d'autobus rapides",
+    frequentCorridors: n => `Corridors d'autobus fréquents &middot; ${n} stations`,
+    showHideRapidBus: "Afficher ou masquer les circuits d'autobus rapides",
+    underConstructionCard: "En construction",
+    stage2Stations: n => `Étape 2 &middot; ${n} stations futures`,
+    showHideWip: "Afficher ou masquer les travaux en cours",
+    routeNotMapped: " &middot; tracé non encore cartographié",
+    rapidBusStation: "Station d'autobus rapide",
+    servedByRoutes: n => `Desservi par ${n} circuits`,
+    routesUnavailable: "Liste des circuits non disponible pour cette section",
+    routeSchedule: r => `Horaire et plan du circuit ${r}`,
+    transitDirections: "Itinéraire en transport en commun",
+    walking: "À pied",
+    openInMaps: "Ouvrir dans Maps",
+    elevatorAlerts: "Alertes d'ascenseurs",
+    checkAlerts: "Consultez les alertes du jour",
+    forClosures: "pour les fermetures et les détours.",
+    clearAddress: "Effacer l'adresse",
+    hidden: " &middot; masquée",
+    minWalk: n => `~${n} min à pied`,
+    straightLine: "Distance à vol d'oiseau; les temps de marche sont approximatifs.",
+    rapidBus: "Autobus rapide",
+    authFileTitle: "Google Maps a rejeté cette page parce qu'elle a été ouverte comme une adresse",
+    authFileBody: `.<br><br>
+      Les restrictions de référent ne peuvent pas correspondre à un chemin de
+      fichier. Servez le dossier par HTTP — <code>python3 -m http.server 8000</code>
+      — puis ouvrez <code>http://localhost:8000</code>.`,
+    authOriginTitle: o => `Google Maps a rejeté la clé d'API pour <code>${o}</code>.<br><br>`,
+    authOriginBody: o => `Le plus souvent, cette origine n'est pas sur la liste
+      d'autorisation de la clé. Ajoutez <code>${o}/*</code> sous
+      <strong>Identifiants → votre clé → Restrictions relatives aux sites Web</strong>
+      dans la console Cloud.<br><br>
+      Sinon, vérifiez que <code>config.js</code> contient une clé valide et que
+      l'<strong>API Maps JavaScript</strong> y est activée.`,
+    loadFailed: "Échec du chargement de Google Maps : "
+  }
+};
+
+let lang = "en";
+
+/* Falls back to English per key, so a missing French string shows English
+   prose rather than a bare identifier. Values may be functions when the string
+   has to interpolate. */
+function t(key, ...args) {
+  const v = STRINGS[lang]?.[key] ?? STRINGS.en[key];
+  if (v === undefined) return key;
+  return typeof v === "function" ? v(...args) : v;
+}
+
+function storedLang() {
+  try { return localStorage.getItem("otm-lang"); } catch (e) { return null; }
+}
+
+/* The reload is the point, not a shortcut: it is the only way to change the
+   Maps API's label language, which is read from the loader's `language`
+   parameter at script load and has no setter. */
+function setLang(next) {
+  if (next === lang) return;
+  try { localStorage.setItem("otm-lang", next); } catch (e) { /* private mode */ }
+  location.reload();
+}
+
+/* Display name. `station.name` stays English because it is the identity key
+   everywhere else — stationIndex lookups, STATION_ROUTES, the label
+   de-duplicator, data-station attributes. */
+const lineName = l => (lang === "fr" && l.nameFr) || l.name;
+
+/* Derived from the terminus names rather than read from the `span` field, so
+   it follows the display language — "South Keys ↔ Airport" has to become
+   "South Keys ↔ Aéroport". `span` stays as the English source of truth for
+   the README and anything that wants the canonical form. */
+const lineSpan = l => `${stationName(l.stations[0])} ↔ ${stationName(l.stations[l.stations.length - 1])}`;
+const stationName = s => (lang === "fr" && s.nameFr) || s.name;
+const stationAddr = s => (lang === "fr" && s.addrFr) || s.addr;
+const stationConn = s => (lang === "fr" && s.connFr) || s.conn;
+const stationAlert = s => (lang === "fr" && s.alertFr) || s.alert;
+
+/* French writes 1,2 km and puts a non-breaking space before the unit. */
+function formatNumber(n, decimals = 0) {
+  return n.toLocaleString(lang === "fr" ? "fr-CA" : "en-CA",
+    { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+/* Accessibility.
+
+   Every open O-Train station is wheelchair accessible, so this is a network-wide fact
+   rather than per-station data: OC Transpo builds all stations with level
+   boarding (platform flush with the train floor), two elevators between each
+   pair of levels for redundancy, tactile wayfinding tiles, and accessible
+   fare gates. A station can still opt out with `access: false` — useful if a
+   Stage 2 station opens without full provision.
+
+   Deliberately NOT modelled: which stations have escalators (9 of 25 do).
+   There's no per-station list published that I could verify, and a wrong
+   escalator claim is worse than no claim for someone planning a trip. */
+const ACCESS = {
+  label: "Wheelchair accessible",
+  labelFr: "Accessible en fauteuil roulant",
+  detail: "Level boarding · elevators to all platforms",
+  detailFr: "Embarquement de plain-pied · ascenseurs vers tous les quais",
+  // OC Transpo serves the same page under /en/ and /fr/, so the link follows
+  // the reader rather than dumping a francophone onto an English alerts feed.
+  alertsUrl: "https://www.octranspo.com/en/alerts/",
+  alertsUrlFr: "https://www.octranspo.com/fr/alertes/"
+};
+
+const accessLabel = () => (lang === "fr" && ACCESS.labelFr) || ACCESS.label;
+const accessDetail = () => (lang === "fr" && ACCESS.detailFr) || ACCESS.detail;
+const alertsUrl = () => (lang === "fr" && ACCESS.alertsUrlFr) || ACCESS.alertsUrl;
+
+const isAccessible = station => station.access !== false;
+
+/* =========================================================================
+   Basemap style
+
+   The basemap is scenery, not the subject: near-black geometry, dim label
+   text, and no pictograms at all — `labels.icon: off` is what removes the
+   highway shields and POI markers, which were the loudest things competing
+   with the routes.
+
+   Label *density* isn't exposed by the Maps API — there's no "space these out"
+   knob. What is possible is varying the style by zoom, which is the practical
+   equivalent: zoomed out, only arterials and highways are named; from zoom 14
+   every street carries its name. Nothing is permanently unlabelled, you just
+   see fewer names at once.
+   ========================================================================= */
+
+const LABEL_ZOOM = 14;          // local street names appear at or above this
+
+/* A touch device fires mouseover on tap and never fires mouseout, so a hover
+   label would appear and then stay stuck over the map. Tapping a station opens
+   its info window anyway, which says everything the label does and more. */
+const CAN_HOVER = window.matchMedia("(hover: hover)").matches;
+
+/* Station dots and the white tunnel dashes both sit on top of the routes, so
+   they come off together when zooming out. 12 is as low as this can go: the
+   tightest pair on the network (Lyon–Parliament, 484 m) is 18 px apart there
+   against ~11 px dots, leaving a clear gap. By 11.5 that gap is 2 px and the
+   dots merge into a blob over the line. */
+const DETAIL_MIN_ZOOM = 12;
+
+/* Both themes want the same map: quiet ground, recessive roads, no pictograms,
+   nothing competing with the routes. Only the colours differ, so the style is
+   generated from a palette rather than written out twice — a rule added here
+   applies to both themes automatically. */
+const PALETTES = {
+  dark: {
+    canvas: "#0d1017", halo: "#0d1017", labelText: "#596373",
+    park: "#101a15", water: "#0a1119", waterLabel: "#3d4959",
+    road: "#161a22", arterial: "#1b2029", highway: "#212734",
+    roadLabel: "#525c6b", highwayLabel: "#626d7e",
+    // Over imagery the palette flips: legible roads, white text, dark wash.
+    // scrimOpacity is how far the photo gets knocked back — raise for dimmer.
+    // These road greys are pre-wash: the scrim sits above the basemap, so it
+    // darkens them too. Near-neutral and barely separated from each other, so
+    // the roads sit down into the dimmed photo instead of reading as a second
+    // network competing with the routes.
+    imgRoad: "#565c64", imgArterial: "#5d646c", imgHighway: "#666e77",
+    imgLabel: "#ffffff", imgHalo: "#000000", imgWaterLabel: "#d3e6ff",
+    scrim: "#080b11", scrimOpacity: 0.42,
+    dotFill: "#ffffff", dotRing: "#ffffff", accent: "#4a9eff",
+    transitway: "#6274c4"
+  },
+  light: {
+    canvas: "#eef1f5", halo: "#ffffff", labelText: "#8a94a5",
+    park: "#e3ece3", water: "#d8e4f0", waterLabel: "#8ba0b8",
+    road: "#ffffff", arterial: "#ffffff", highway: "#fbfcfd",
+    roadLabel: "#94a0b0", highwayLabel: "#7f8b9c",
+    // A white wash leaves a pale photo, so imagery labels and roads go dark.
+    imgRoad: "#5a6675", imgArterial: "#4a5665", imgHighway: "#3b4757",
+    imgLabel: "#1e2733", imgHalo: "#ffffff", imgWaterLabel: "#2f5378",
+    scrim: "#ffffff", scrimOpacity: 0.38,
+    dotFill: "#ffffff", dotRing: "#ffffff", accent: "#1a73e8",
+    transitway: "#9fb2d9"
+  }
+};
+
+let theme = "light";
+const palette = () => PALETTES[theme];
+
+function buildBaseStyle(p) {
+  return [
+    { elementType: "geometry", stylers: [{ color: p.canvas }] },
+    { elementType: "labels.text.fill", stylers: [{ color: p.labelText }] },
+    { elementType: "labels.text.stroke", stylers: [{ color: p.halo }, { weight: 2 }] },
+
+    // Every pictogram: highway shields, POI icons, park markers.
+    { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
+
+    // POI names are pure clutter here; parks stay as faint shape only.
+    { featureType: "poi", stylers: [{ visibility: "off" }] },
+    { featureType: "poi.park", elementType: "geometry",
+      stylers: [{ visibility: "on" }, { color: p.park }] },
+
+    // Roads present but recessive, arterials a shade apart from locals.
+    { featureType: "road", elementType: "geometry", stylers: [{ color: p.road }] },
+    { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: p.arterial }] },
+    { featureType: "road.highway", elementType: "geometry", stylers: [{ color: p.highway }] },
+    { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: p.roadLabel }] },
+    { featureType: "road.highway", elementType: "labels.text.fill", stylers: [{ color: p.highwayLabel }] },
+
+    // We draw the transit network ourselves; Google's would double up.
+    { featureType: "transit", stylers: [{ visibility: "off" }] },
+
+    { featureType: "water", elementType: "geometry", stylers: [{ color: p.water }] },
+    { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: p.waterLabel }] },
+
+    // Boundaries and place names both off. The neighbourhood captions —
+    // GREENBORO, BLOSSOM PARK, WINDSOR PARK VILLAGE — sat right on top of our
+    // station labels, and naming the city adds nothing to a map that never
+    // leaves it. Blanket rules rather than per-sublevel ones, because the
+    // narrower administrative.neighborhood rule this replaces wasn't taking
+    // effect: the captions were still drawn.
+    { featureType: "administrative", elementType: "geometry", stylers: [{ visibility: "off" }] },
+    { featureType: "administrative", elementType: "labels", stylers: [{ visibility: "off" }] }
+  ];
+}
+
+const SPARSE_LABELS = [
+  { featureType: "road.local", elementType: "labels", stylers: [{ visibility: "off" }] }
+];
+
+/* The base style is tuned for a flat coloured ground, and all of it applies
+   over satellite too — which inverts the intent in both themes. Dark mode's
+   near-black roads become black lines across the photo; light mode's white
+   roads vanish into the white wash. So the imagery palette is separate, and
+   whichever wash is in play, roads and labels swing the other way.
+
+   Appended last so it wins, and it restates the specific road rules rather
+   than relying on a blanket rule to override the narrower ones set earlier. */
+function buildImageryOverrides(p) {
+  return [
+    { featureType: "road", elementType: "geometry", stylers: [{ color: p.imgRoad }] },
+    { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: p.imgArterial }] },
+    { featureType: "road.highway", elementType: "geometry", stylers: [{ color: p.imgHighway }] },
+
+    // Drop the casing that outlines every road. There's no width styler in the
+    // Maps API, and losing the outline is the one thing that genuinely makes a
+    // road render thinner rather than merely dimmer.
+    { featureType: "road", elementType: "geometry.stroke", stylers: [{ visibility: "off" }] },
+
+    // Flat fills of either theme would blot out the photograph.
+    { featureType: "poi.park", elementType: "geometry", stylers: [{ visibility: "off" }] },
+    { featureType: "water", elementType: "geometry", stylers: [{ visibility: "off" }] },
+
+    { elementType: "labels.text.fill", stylers: [{ color: p.imgLabel }] },
+    { elementType: "labels.text.stroke", stylers: [{ color: p.imgHalo }, { weight: 3 }] },
+    { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: p.imgLabel }] },
+    { featureType: "road.highway", elementType: "labels.text.fill", stylers: [{ color: p.imgLabel }] },
+    { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: p.imgWaterLabel }] }
+  ];
+}
+
+/* =========================================================================
+   Map rendering
+   ========================================================================= */
+
+let map, infoWindow, stationLabels, imageryScrim;
+let labelTier = null;   // remembers which style is applied, to avoid churn
+
+const layers = {};       // lineId -> { route, tunnels, path, visible }
+const futureShapes = []; // Stage 2 polylines and markers, toggled as one
+const futureLabels = []; // their names, drawn by the same overlay as the rest
+let futureVisible = false;
+
+const transitwayShapes = [];   // BRT corridors, drawn under the rail
+const transitLabels = [];      // their station names, in the shared overlay
+let transitwayVisible = true;
+const stationIndex = []; // flat list for search: { line, station, marker }
+
+function initMap() {
+  // No mapId here on purpose: a map ID routes styling through the cloud
+  // console and makes the `styles` array below a no-op.
+  map = new google.maps.Map(document.getElementById("map"), {
+    center: DEFAULT_VIEW.center,
+    zoom: DEFAULT_VIEW.zoom,
+    mapTypeControl: false,
+    streetViewControl: true,
+    fullscreenControl: false,
+    zoomControl: true,
+    // "auto" makes a phone demand two fingers to pan, which fights the user on
+    // a page whose whole point is the map.
+    gestureHandling: "greedy"
+  });
+
+  infoWindow = new google.maps.InfoWindow({ maxWidth: infoWindowWidth() });
+
+  /* Imagery can't be styled — no featureType covers the photo itself — so the
+     only way to calm it is to lay something over it. A world-sized translucent
+     rectangle at zIndex 1 sits above the tiles but beneath the routes (zIndex
+     2) and dashes (3), so the photo dims and the network doesn't. Dimming the
+     whole map element with a CSS filter would have taken the routes down with
+     it and gained nothing. Not clickable, so taps still reach the map.
+
+     Built before the first applyStyles(), which recolours it per theme. */
+  imageryScrim = new google.maps.Rectangle({
+    bounds: { north: 85, south: -85, east: 180, west: -180 },
+    strokeOpacity: 0,
+    clickable: false,
+    zIndex: 1,
+    map: null                      // switched on only for imagery
+  });
+
+  labelTier = DEFAULT_VIEW.zoom >= LABEL_ZOOM ? "full" : "sparse";
+  applyStyles();
+
+  NETWORK.forEach(drawLine);
+  drawTransitway();
+  drawFuture();               // built hidden; the sidebar card switches it on
+  initStationLabels();        // needs the stationIndex that drawLine fills
+  buildSidebar();
+  initSearch();
+  // Runs again from the label overlay's onAdd(), which is where the entries
+  // gain the labelZoom this depends on.
+  updateDetailVisibility();
+
+  document.getElementById("basemap").addEventListener("click", e => {
+    const btn = e.target.closest("button");
+    if (btn) setBasemap(btn.dataset.type);
+  });
+
+  document.getElementById("theme").addEventListener("click", e => {
+    const btn = e.target.closest("button");
+    if (btn) setTheme(btn.dataset.theme);
+  });
+
+  // Escape backs out of one thing at a time: suggestions first (handled on the
+  // input itself), then the line popup.
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && suggestEl.hidden) closeLinePanel();
+  });
+
+  map.addListener("zoom_changed", () => {
+    updateDetailVisibility();
+    applyLabelTier();
+  });
+
+  /* Street View takes over the same element, and none of the map's furniture
+     applies to a panorama — the basemap and theme switches do nothing there,
+     and the legend describes lines you can't see. Stand them down while it's
+     up. The routes need no handling: overlays are map-only and never render
+     in a panorama. */
+  map.getStreetView().addListener("visible_changed", () => {
+    const inPanorama = map.getStreetView().getVisible();
+    document.body.classList.toggle("streetview", inPanorama);
+    if (inPanorama) closeLinePanel();
+  });
+
+  // Clicking away dismisses the popup and brings the other lines back.
+  // Overlays swallow their own clicks, so this only fires on bare basemap.
+  map.addListener("click", dismissLinePanel);
+
+  // pointerdown rather than click: Safari on iOS is unreliable about bubbling
+  // taps on non-interactive elements up to a document-level click listener.
+  document.addEventListener("pointerdown", e => {
+    if (e.target.closest("#line-panel")) return;   // interacting with the popup
+    if (e.target.closest(".line-info")) return;    // switching to another line
+    if (e.target.closest("#map")) return;          // handled by the map listener
+    dismissLinePanel();
+  });
+}
+
+/* The click that opens the popup also bubbles onward; ignore dismissals that
+   land in the same instant so the popup can't close itself on open. */
+function dismissLinePanel() {
+  if (performance.now() - openedAt < 150) return;
+  closeLinePanel();
+}
+
+/* Switch the base map style. "hybrid" is satellite imagery with road and
+   place labels kept on top; plain "satellite" would drop them. */
+function setBasemap(type) {
+  map.setMapTypeId(type);
+
+  document.querySelectorAll("#basemap button").forEach(b =>
+    b.classList.toggle("active", b.dataset.type === type)
+  );
+
+  // Imagery is busy and mid-toned, so routes and station dots both need a
+  // little more weight to hold their own against it.
+  const onImagery = type === "hybrid" || type === "satellite";
+  document.body.classList.toggle("imagery", onImagery);
+  applyStyles();   // reads the class just set, so ordering matters here
+  imageryScrim.setMap(onImagery ? map : null);
+
+  Object.values(layers).forEach(layer =>
+    layer.route.setOptions({ strokeWeight: routeWeight(false) })
+  );
+  // The corridors thicken over imagery too, and by the same reasoning — but
+  // they carry their own scale, so they need their own pass.
+  transitwayShapes.forEach(s => {
+    if (!s.setIcon) s.setOptions({ strokeWeight: corridorWeight(false) });
+  });
+  refreshStationIcons();
+}
+
+/* The style is composed from the base plus whichever modifiers apply: label
+   thinning when zoomed out, light label text over imagery. */
+function applyStyles() {
+  const p = palette();
+  const onImagery = document.body.classList.contains("imagery");
+  map.setOptions({
+    styles: buildBaseStyle(p)
+      .concat(labelTier === "sparse" ? SPARSE_LABELS : [])
+      .concat(onImagery ? buildImageryOverrides(p) : [])
+  });
+  imageryScrim.setOptions({ fillColor: p.scrim, fillOpacity: p.scrimOpacity });
+}
+
+/* Switching theme restyles the basemap, recolours the vector markers (they're
+   drawn by the Maps API, so no CSS reaches them), and repaints the DOM through
+   the token block. Stored so the choice survives a reload. */
+function setTheme(name) {
+  theme = PALETTES[name] ? name : "light";
+  document.documentElement.classList.toggle("dark", theme === "dark");
+
+  document.querySelectorAll("#theme button").forEach(b =>
+    b.classList.toggle("active", b.dataset.theme === theme)
+  );
+
+  try { localStorage.setItem("otm-theme", theme); } catch (e) { /* private mode */ }
+
+  if (!map) return;              // called once before the map exists
+  applyStyles();
+  refreshStationIcons();
+  refreshTransitwayColour();
+  if (addrMarker) addrMarker.setIcon(addressIcon());
+}
+
+function storedTheme() {
+  try { return localStorage.getItem("otm-theme"); } catch (e) { return null; }
+}
+
+/* The sidebar is the widest piece of furniture on the page, so the hamburger
+   folds it away when the map is what you want. Hidden state is the class, not
+   shown — the default is open, and a default that needs no class can't flash
+   the wrong way before the script runs. */
+function setSidebarOpen(open) {
+  document.body.classList.toggle("sidebar-hidden", !open);
+  document.getElementById("sidebar-open").setAttribute("aria-expanded", String(open));
+  try { localStorage.setItem("otm-sidebar", open ? "1" : "0"); } catch (e) { /* private mode */ }
+}
+
+/* Everything on the page that isn't rendered by a later function: the header,
+   the search field, the footer, the three segmented controls, the legend.
+
+   Runs at parse time alongside setTheme, so the page is never briefly English
+   before turning French. The legend's line rows are built from NETWORK rather
+   than written out in markup — a second hand-kept copy of the line names is
+   exactly the thing that drifts in one language and not the other. */
+function applyLanguage() {
+  document.documentElement.lang = lang;
+  document.title = lang === "fr"
+    ? "Transport rapide d'Ottawa — carte du train et des autobus"
+    : "Ottawa Rapid Transit — Rail and Bus Map";
+
+  const set = (id, html) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  };
+  const attr = (sel, name, value) => {
+    const el = document.querySelector(sel);
+    if (el) el.setAttribute(name, value);
+  };
+
+  set("brand-title", t("title"));
+  set("brand-tagline", t("tagline"));
+
+  attr("#sidebar-close", "title", t("hideSidebar"));
+  attr("#sidebar-close", "aria-label", t("hideSidebar"));
+  attr("#sidebar-open", "title", t("showSidebar"));
+  attr("#sidebar-open", "aria-label", t("showSidebar"));
+  attr("#search", "placeholder", t("searchPlaceholder"));
+  attr("#suggest", "aria-label", t("suggestions"));
+  attr("#basemap", "aria-label", t("basemapGroup"));
+  attr("#theme", "aria-label", t("themeGroup"));
+  attr("#lang", "aria-label", t("langGroup"));
+  attr("#compass", "aria-label", t("northIsUp"));
+  attr("#line-panel", "aria-label", t("lineDetails"));
+
+  const [mapBtn, satBtn] = document.querySelectorAll("#basemap button");
+  if (mapBtn) mapBtn.textContent = t("map");
+  if (satBtn) satBtn.textContent = t("satellite");
+  const [lightBtn, darkBtn] = document.querySelectorAll("#theme button");
+  if (lightBtn) lightBtn.textContent = t("light");
+  if (darkBtn) darkBtn.textContent = t("dark");
+
+  document.querySelectorAll("#lang button").forEach(b =>
+    b.classList.toggle("active", b.dataset.lang === lang));
+
+  const dev = lang === "fr"
+    ? "https://www.octranspo.com/fr/planifiez-votre-trajet/outils-de-voyage/developpeurs/"
+    : "https://www.octranspo.com/en/plan-your-trip/travel-tools/developers/";
+  set("site-footer", `
+    ${t("footerHelp")}
+    ${t("footerAlignment")} &copy;
+    <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
+    ${t("footerContributors")}
+    ${t("footerRoutes")}
+    <a href="${dev}" target="_blank" rel="noopener">OC Transpo</a>.
+  `);
+
+  set("legend", `
+    <div class="title">${t("legend")}</div>
+    ${NETWORK.map(l => `<div class="row"><span class="bar" style="background:${l.color}"></span> ${escapeHtml(lineName(l))}</div>`).join("")}
+    <div class="row"><span class="dashed"></span> ${t("undergroundSection")}</div>
+    <div class="row"><span class="bar transitway-bar"></span> ${t("rapidBusRoute")}</div>
+    <div class="row"><span class="bar under-construction"></span> ${t("underConstruction")}</div>
+    <div class="row"><span class="sym" role="img" aria-label="${escapeHtml(accessLabel())}">&#9855;&#xFE0E;</span> ${t("accessibleAll")}</div>
+  `);
+
+  document.getElementById("lang").addEventListener("click", e => {
+    const btn = e.target.closest("button");
+    if (btn) setLang(btn.dataset.lang);
+  });
+}
+
+function initSidebarToggle() {
+  let stored = null;
+  try { stored = localStorage.getItem("otm-sidebar"); } catch (e) { /* private mode */ }
+
+  setSidebarOpen(stored !== "0");
+
+  document.getElementById("sidebar-open").addEventListener("click", () => setSidebarOpen(true));
+  document.getElementById("sidebar-close").addEventListener("click", () => setSidebarOpen(false));
+}
+
+/* Below LABEL_ZOOM only arterials and highways are named. Rebuilding the whole
+   style array is the only way to change this at runtime, so only do it when
+   the tier actually flips. */
+function applyLabelTier() {
+  const tier = map.getZoom() >= LABEL_ZOOM ? "full" : "sparse";
+  if (tier === labelTier) return;
+  labelTier = tier;
+  applyStyles();
+}
+
+function drawLine(line) {
+  const path = decodePath(line.path);
+
+  // No dark casing: on a basemap this quiet the route reads perfectly well on
+  // its own, and the casing was the heaviest ink on the map.
+  const route = new google.maps.Polyline({
+    path, map,
+    strokeColor: line.color,
+    strokeOpacity: 1,
+    strokeWeight: routeWeight(false),
+    zIndex: 2
+  });
+
+  // Dashed white overlay over the sections OSM tags as tunnel.
+  const tunnels = (line.tunnelPaths || []).map(encoded => new google.maps.Polyline({
+    path: decodePath(encoded),
+    map,
+    strokeOpacity: 0,
+    zIndex: 3,
+    icons: [{
+      icon: {
+        path: "M 0,-1 0,1",
+        strokeColor: "#ffffff",
+        strokeOpacity: 0.85,
+        strokeWeight: 2.5,
+        scale: 1.5
+      },
+      offset: "0",
+      repeat: "11px"
+    }]
+  }));
+
+  // The dashed overlays sit on top of the route, so they have to answer to the
+  // same gestures — otherwise crossing one reads as leaving the line.
+  [route, ...tunnels].forEach(shape => {
+    shape.addListener("click", () => openLinePanel(line));
+    if (!CAN_HOVER) return;
+    shape.addListener("mouseover", () => route.setOptions({ strokeWeight: routeWeight(true) }));
+    shape.addListener("mouseout", () => route.setOptions({ strokeWeight: routeWeight(false) }));
+  });
+
+  line.stations.forEach(station => {
+    // A transfer station is drawn once, by whichever line reaches it first.
+    const existing = stationIndex.find(e => e.station.name === station.name);
+    if (existing) {
+      existing.lines.push(line);
+      return;
+    }
+
+    const marker = new google.maps.Marker({
+      map,
+      position: { lat: station.lat, lng: station.lng },
+      // No `title`: the custom hover label replaces the native tooltip, and
+      // having both means the same name twice, a second apart.
+      icon: stationIcon(line, station, false),
+      zIndex: station.transfer ? 20 : 10
+    });
+
+    const entry = { line, lines: [line], station, marker };
+    stationIndex.push(entry);
+
+    marker.addListener("click", () => openStation(entry));
+
+    // Touch fires mouseover on tap but never mouseout, so the dot would stay
+    // enlarged and the label stranded. Don't wire hover up at all there.
+    if (CAN_HOVER) {
+      marker.addListener("mouseover", () => {
+        marker.setIcon(stationIcon(line, station, true));
+        entry.labelEl?.classList.add("hot");
+      });
+      marker.addListener("mouseout", () => {
+        marker.setIcon(stationIcon(line, station, false));
+        entry.labelEl?.classList.remove("hot");
+      });
+    }
+  });
+
+  layers[line.id] = { route, tunnels, path, visible: true };
+}
+
+/* Names are drawn permanently beside every dot, so they're readable without a
+   mouse — hover-only labels were invisible on a phone. Zooming out drops them
+   by importance: minor stops go first, then stops with connections, and the
+   interchanges and line ends last, alongside the dots themselves.
+
+   One overlay owns all the labels rather than one overlay each: a single
+   projection lookup per redraw, and one place to reposition from.
+
+   Built after the Maps library has loaded, since it extends OverlayView, which
+   doesn't exist when this file is first evaluated — hence a factory called
+   from initMap rather than a top-level class declaration. It also has to run
+   after drawLine, which is what fills stationIndex. */
+
+const STOP_LABEL_ZOOM = {
+  // Where the line ends is the one thing worth knowing on a zoomed-out map —
+  // it's what a vehicle's destination header tells you. These arrive two steps
+  // before anything else, below even DETAIL_MIN_ZOOM, so the far view is four
+  // names on three lines and nothing else. Deliberately without dots, the way
+  // a regional rail map just runs the line out to its name.
+  terminus: 10,
+  major: DETAIL_MIN_ZOOM,   // interchanges and stops with connections
+  minor: 13,
+  transit: 15,              // rapid-bus stops: late, so they never crowd rail names
+  // Stage 2 arrives with the live network rather than two steps later. It
+  // still ranks below every open station, so in a collision it's the future
+  // name that yields — that's what keeps it out of the way, not the zoom.
+  future: DETAIL_MIN_ZOOM
+};
+
+/* Ranking is separate from the zoom threshold because they answer different
+   questions: the threshold decides when a name is eligible, the rank decides
+   who wins when two eligible names overlap. Terminus first — it's the name on
+   the front of the train, and the one you look for to tell which way a line
+   runs. Without its own rank a terminus ties with every other stop at the same
+   threshold and the tiebreak falls to alphabetical order, which is how
+   "Airport" could lose its slot to a neighbour. */
+function labelPriority(entry) {
+  const { station, lines } = entry;
+  const isTerminus = lines.some(l =>
+    l.stations[0].name === station.name ||
+    l.stations[l.stations.length - 1].name === station.name);
+
+  // An interchange is where lines meet, not where the network ends. Bayview
+  // and South Keys are technically line ends but sit in the middle of the map,
+  // so naming them at far zoom would read as arbitrary — they wait their turn
+  // with the other interchanges.
+  if (isTerminus && !station.transfer) return 0;
+  if (isTerminus || station.transfer) return 1;
+  return station.conn ? 2 : 3;
+}
+
+function stopLabelZoom(entry) {
+  const rank = labelPriority(entry);
+  if (rank === 0) return STOP_LABEL_ZOOM.terminus;
+  return rank <= 2 ? STOP_LABEL_ZOOM.major : STOP_LABEL_ZOOM.minor;
+}
+
+function initStationLabels() {
+  class StationLabels extends google.maps.OverlayView {
+    constructor() {
+      super();
+      this.container = document.createElement("div");
+      this.container.className = "stop-labels";
+      this.setMap(map);
+    }
+
+    onAdd() {
+      /* markerLayer, not floatPane: the info window renders into floatPane, and
+         a label from some other station was landing on top of the open bubble.
+         Panes are stacked in a fixed order, so this puts every label below the
+         bubble for good rather than depending on z-index luck. Labels are
+         pointer-events: none anyway, so nothing is lost by sitting in a pane
+         that doesn't receive mouse events. */
+      this.getPanes().markerLayer.appendChild(this.container);
+
+      // Open and Stage 2 stations share one overlay so they compete for space
+      // in a single collision pass — two overlays would happily print a future
+      // name straight through a live one.
+      this.entries = stationIndex.concat(futureLabels, transitLabels);
+
+      this.entries.forEach(entry => {
+        const el = document.createElement("div");
+        el.className = "stop-label" +
+          (entry.isFuture ? " future" : entry.isTransit ? " transit" : "");
+        el.textContent = stationName(entry.station);
+        this.container.appendChild(el);
+
+        entry.labelEl = el;
+        entry.labelZoom = entry.isFuture  ? STOP_LABEL_ZOOM.future
+                        : entry.isTransit ? STOP_LABEL_ZOOM.transit
+                        : stopLabelZoom(entry);
+        // Ranked last of all: a bus stop should never displace a train station.
+        entry.labelRank = entry.isFuture ? 4 : entry.isTransit ? 5 : labelPriority(entry);
+        entry.labelGap = entry.station.transfer ? 12 : 10;   // clear of the dot
+        entry.labelAbove = !!entry.isFuture;                 // Stage 2 sits over its dot
+        // Measured once, while everything is still visible. Reading offsetWidth
+        // inside draw() would force a reflow on every pan frame, and the text
+        // never changes anyway.
+        entry.labelW = el.offsetWidth;
+        entry.labelH = el.offsetHeight;
+      });
+
+      // Most important first, so that when two names collide it's the lesser
+      // one that yields: termini, then interchanges, then stops with
+      // connections, then the rest, and Stage 2 last of all — a station that
+      // isn't open yet should never displace one that is. Name breaks ties,
+      // to keep it stable.
+      this.ordered = [...this.entries].sort((a, b) =>
+        a.labelRank - b.labelRank ||
+        a.labelZoom - b.labelZoom ||
+        a.station.name.localeCompare(b.station.name));
+
+      /* labelZoom only exists as of this line, and updateDetailVisibility has
+         already run at least once without it — every `zoom >= entry.labelZoom`
+         compared against undefined, came out false, and marked every name
+         hidden. Recompute now that the entries are complete; the API calls
+         draw() immediately after this, so the corrected flags are what it uses.
+
+         Above DETAIL_MIN_ZOOM this was invisible, because `detailed` shows the
+         names on its own. It only showed at the default view, where the four
+         terminus names are the whole label layer and simply never appeared
+         until something else triggered a recompute. */
+      updateDetailVisibility();
+    }
+
+    onRemove() { this.container.remove(); }
+
+    /* Places labels in importance order, skipping any that would overlap one
+       already placed. Collisions depend only on relative pixel offsets, which
+       depend only on zoom — so panning never makes a name flicker. */
+    draw() {
+      const projection = this.getProjection();
+      if (!projection || !this.ordered) return;
+
+      const zoom = map.getZoom();
+      const placed = [];
+      // A stop served by both rail and a bus corridor has an entry per layer.
+      // Whichever is drawn first claims the name; the other stays silent so a
+      // shared station reads once, no matter how many layers it belongs to.
+      const named = new Set();
+
+      // Stops of a framed line get first claim on the space, so a name from
+      // some other line can't crowd out one the user is actually looking at.
+      const order = this.ordered.filter(e => e.labelForced)
+        .concat(this.ordered.filter(e => !e.labelForced));
+
+      order.forEach(entry => {
+        const el = entry.labelEl;
+
+        if (!entry.labelShown || (!entry.labelForced && zoom < entry.labelZoom)) {
+          el.style.display = "none";
+          return;
+        }
+
+        const point = projection.fromLatLngToDivPixel(
+          new google.maps.LatLng(entry.station.lat, entry.station.lng));
+        if (!point) return;
+
+        // Two placements: beside the dot for open stations, centred above it
+        // for Stage 2. The collision box has to match wherever the label
+        // actually lands, or names would be tested in one place and drawn in
+        // another.
+        const w = entry.labelW + 4;   // a little breathing room between names
+        const h = entry.labelH + 2;
+        const box = entry.labelAbove
+          ? { x: point.x - w / 2, y: point.y - entry.labelGap - h, w, h }
+          : { x: point.x + entry.labelGap, y: point.y - entry.labelH / 2, w, h };
+
+        const clashes = named.has(entry.station.name) || placed.some(other =>
+          box.x < other.x + other.w && other.x < box.x + box.w &&
+          box.y < other.y + other.h && other.y < box.y + box.h);
+
+        if (clashes) {
+          el.style.display = "none";
+          return;
+        }
+
+        named.add(entry.station.name);
+        placed.push(box);
+        el.style.display = "";
+        el.style.transform = entry.labelAbove
+          ? `translate(${point.x}px, ${point.y - entry.labelGap}px) translate(-50%, -100%)`
+          : `translate(${box.x}px, ${point.y}px) translateY(-50%)`;
+      });
+    }
+  }
+
+  stationLabels = new StationLabels();
+}
+
+/* Stage 2 draws in the line's colour but hollow and half-lit, so it reads as
+   "not yet" at a glance rather than needing a legend to decode. Kept in its
+   own layer object: these stations never enter stationIndex, so they can't
+   turn up in search results or as the nearest station to an address. */
+function drawFuture() {
+  FUTURE.forEach(project => {
+    const shapes = [];
+
+    if (project.path) {
+      shapes.push(new google.maps.Polyline({
+        path: decodePath(project.path),
+        map: null,
+        strokeOpacity: 0,
+        zIndex: 1,
+        icons: [{
+          icon: {
+            path: "M 0,-1 0,1",
+            strokeColor: project.color,
+            strokeOpacity: 0.75,
+            strokeWeight: 4,
+            scale: 1.4
+          },
+          offset: "0",
+          repeat: "12px"
+        }]
+      }));
+    }
+
+    project.stations.forEach(station => {
+      // A label entry, not a stationIndex entry — it gets a name on the map
+      // without becoming searchable or counting as a nearest station.
+      const entry = { station, project, isFuture: true };
+      futureLabels.push(entry);
+
+      const marker = new google.maps.Marker({
+        map: null,
+        position: { lat: station.lat, lng: station.lng },
+        title: `${stationName(station)} — ${lineName(project)} (${t("underConstructionCard").toLowerCase()})`,
+        zIndex: 5,
+        icon: futureStationIcon(project, false)
+      });
+
+      // Same hover response as an open station: the dot grows and its name
+      // lights up. Skipped on touch for the same reason as everywhere else —
+      // mouseover fires on tap and mouseout never follows.
+      if (CAN_HOVER) {
+        marker.addListener("mouseover", () => {
+          marker.setIcon(futureStationIcon(project, true));
+          entry.labelEl?.classList.add("hot");
+        });
+        marker.addListener("mouseout", () => {
+          marker.setIcon(futureStationIcon(project, false));
+          entry.labelEl?.classList.remove("hot");
+        });
+      }
+
+      shapes.push(marker);
+    });
+
+    futureShapes.push(...shapes);
+  });
+}
+
+/* Deliberately understated: a neutral grey, thinner than the rail, and at
+   zIndex 0 so every route draws over it. It's context for where the buses run,
+   not a fourth network competing with the trains. */
+function drawTransitway() {
+  TRANSITWAY.forEach(corridor => {
+    const shape = new google.maps.Polyline({
+      path: decodePath(corridor.path),
+      map: transitwayVisible ? map : null,
+      strokeColor: palette().transitway,
+      strokeOpacity: 0.85,
+      strokeWeight: corridorWeight(false),
+      zIndex: 0
+    });
+
+    // Same affordance the rail lines have: the corridor is clickable, so it
+    // should answer the pointer. It grows proportionally more than a train
+    // line does — 1.6 px is thin enough that the rail's +2.5 px would look
+    // like a different layer rather than the same one under the cursor.
+    if (CAN_HOVER) {
+      shape.addListener("mouseover", () =>
+        shape.setOptions({ strokeWeight: corridorWeight(true), strokeOpacity: 1 }));
+      shape.addListener("mouseout", () =>
+        shape.setOptions({ strokeWeight: corridorWeight(false), strokeOpacity: 0.85 }));
+    }
+
+    // Which buses use this stretch is the whole reason the corridor is drawn,
+    // and it differs section by section — 3 routes on one, 31 on another — so
+    // the answer belongs on the section you clicked, not in a global list.
+    shape.addListener("click", e => {
+      prepareInfoWindow();
+      infoWindow.setContent(`
+        <div class="iw">
+          <h3>${t("rapidBusRoute")}</h3>
+          <p class="conn">${corridor.routes.length
+            ? t("servedByRoutes", corridor.routes.length)
+            : t("routesUnavailable")}</p>
+          <div class="routes">${routeChips(corridor.routes)}</div>
+        </div>
+      `);
+      infoWindow.setPosition(e.latLng);
+      infoWindow.open({ map });
+    });
+
+    transitwayShapes.push(shape);
+  });
+
+  TRANSIT_STATIONS.forEach(station => {
+    // Label entry only — like Stage 2, these never join stationIndex, so they
+    // stay out of search, line stats and nearest-station results.
+    const entry = { station, isTransit: true };
+    transitLabels.push(entry);
+
+    const marker = new google.maps.Marker({
+      map: transitwayVisible ? map : null,
+      position: { lat: station.lat, lng: station.lng },
+      title: `${stationName(station)} — ${t("rapidBusStation").toLowerCase()}`,
+      zIndex: 4,          // under the rail dots, over the corridors
+      icon: transitStationIcon(false)
+    });
+    entry.marker = marker;
+
+    marker.addListener("click", () => openTransitStation(entry));
+
+    if (CAN_HOVER) {
+      marker.addListener("mouseover", () => {
+        marker.setIcon(transitStationIcon(true));
+        entry.labelEl?.classList.add("hot");
+      });
+      marker.addListener("mouseout", () => {
+        marker.setIcon(transitStationIcon(false));
+        entry.labelEl?.classList.remove("hot");
+      });
+    }
+
+    transitwayShapes.push(marker);
+  });
+}
+
+/* The bus counterpart to openStation, and separate from it because these
+   stations carry different data: routes rather than lines, and none of the
+   rail network's addresses, connections or accessibility facts.
+
+   Reachable from the address panel as well as from the marker, so it can be
+   asked to open a station whose marker is off the map — the layer toggled off,
+   or the zoom below DETAIL_MIN_ZOOM. Anchoring to a hidden marker would put
+   the bubble nowhere, hence the position fallback. */
+function openTransitStation(entry) {
+  const { station } = entry;
+  const routes = stationRoutes(station);
+  const position = { lat: station.lat, lng: station.lng };
+
+  prepareInfoWindow();
+
+  // Same as the rail popup: with an address pinned, directions start from it.
+  const from = currentAddress
+    ? `<p class="from">${t("from").toLowerCase()} ${escapeHtml(currentAddress.name)}</p>`
+    : "";
+
+  infoWindow.setContent(`
+    <div class="iw">
+      <h3>${escapeHtml(stationName(station))}</h3>
+      <p class="conn">${t("rapidBusStation")}${routes.length
+        ? ` &middot; ${t("servedByRoutes", routes.length)}` : ""}</p>
+      ${routes.length ? `<div class="routes">${routeChips(routes)}</div>` : ""}
+      ${from}
+      <div class="links">
+        <a href="${directionsUrl(station, "transit")}" target="_blank" rel="noopener">${t("transitDirections")}</a>
+        <a href="${directionsUrl(station, "walking")}" target="_blank" rel="noopener">${t("walking")}</a>
+        <a href="${mapsUrl(station)}" target="_blank" rel="noopener">${t("openInMaps")}</a>
+      </div>
+    </div>
+  `);
+
+  if (entry.marker && entry.marker.getMap()) {
+    infoWindow.open({ map, anchor: entry.marker });
+  } else {
+    infoWindow.setPosition(position);
+    infoWindow.open({ map });
+  }
+
+  // Matches openStation, and the panel row depends on it: the nearest rapid bus
+  // station can easily be off screen when the row is clicked.
+  map.panTo(position);
+  if (map.getZoom() < 14) map.setZoom(14);
+}
+
+/* Same circle as a train stop but inverted — solid navy inside a white ring,
+   where a station is a white centre inside a coloured ring. Reads as a
+   different kind of stop without needing a different shape, and being centred
+   on its coordinate rather than anchored at a tip makes it the more honest
+   marker of the two. */
+function transitStationIcon(hover) {
+  return {
+    path: google.maps.SymbolPath.CIRCLE,
+    scale: hover ? 5 : 3.6,
+    fillColor: palette().transitway,
+    fillOpacity: 1,
+    strokeColor: "#ffffff",
+    strokeWeight: 1.6,
+    strokeOpacity: 1
+  };
+}
+
+/* Which routes call at a stop, from the OSM route relations that list it as a
+   member. Keyed by name because that is what the marker carries; stations the
+   data has nothing for simply show no chips rather than an empty box. */
+function stationRoutes(station) {
+  return STATION_ROUTES[station.name] || [];
+}
+
+/* OC Transpo's schedule page takes the route number and a date. The date is
+   generated at click time rather than baked in: a hard-coded YYYYMMDD starts
+   asking for a past day's timetable the morning after it's written, and this
+   page has no build step to refresh it. */
+function scheduleUrl(route) {
+  const now = new Date();
+  const stamp = String(now.getFullYear()) +
+    String(now.getMonth() + 1).padStart(2, "0") +
+    String(now.getDate()).padStart(2, "0");
+  const base = lang === "fr"
+    ? "https://www.octranspo.com/fr/planifiez-votre-trajet/horaires-plans/"
+    : "https://www.octranspo.com/en/plan-your-trip/schedules-maps/";
+  return base + "?" + new URLSearchParams({ "sched-lang": lang, date: stamp, rte: route });
+}
+
+/* One renderer for route numbers, used by the corridor popup, the station
+   popup and the sidebar list — three places that were each about to grow their
+   own copy of the same anchor. */
+function routeChips(routes) {
+  return routes.map(r =>
+    `<a class="route" href="${scheduleUrl(r)}" target="_blank" rel="noopener"
+        title="${escapeHtml(t("routeSchedule", r))}">${escapeHtml(r)}</a>`
+  ).join("");
+}
+
+function setTransitwayVisible(visible) {
+  transitwayVisible = visible;
+  updateDetailVisibility();
+  syncConnector(TRANSITWAY_LINE.id, visible);
+}
+
+function refreshTransitwayColour() {
+  transitwayShapes.forEach(s => {
+    if (s.setIcon) s.setIcon(transitStationIcon(false));       // station marker
+    else s.setOptions({ strokeColor: palette().transitway });  // corridor
+  });
+
+  // The rail connectors are fixed line colours, but this one tracks the theme.
+  const connector = connectors[TRANSITWAY_LINE.id];
+  if (connector) connector.setOptions({ icons: connectorIcons(palette().transitway) });
+}
+
+/* Hollow and half-lit against the solid dots of the open network, and growing
+   on hover by the same 1.3x the open ones use. */
+function futureStationIcon(project, hover) {
+  return {
+    path: google.maps.SymbolPath.CIRCLE,
+    scale: 4.5 * (hover ? 1.3 : 1),
+    fillColor: palette().dotFill,
+    fillOpacity: 0.55,
+    strokeColor: project.color,
+    strokeOpacity: hover ? 1 : 0.75,
+    strokeWeight: 2
+  };
+}
+
+/* Both of these just flip the flag — updateDetailVisibility owns what actually
+   goes on the map, because visibility is now two questions at once: is the
+   layer switched on, and are we zoomed in far enough for its stations. */
+function setFutureVisible(visible) {
+  futureVisible = visible;
+  updateDetailVisibility();
+}
+
+/* Routes run heavier over imagery, which is busy enough to swallow a thin
+   line, and heavier again while hovered. */
+function routeWeight(hover) {
+  const base = document.body.classList.contains("imagery") ? 6.5 : 5;
+  return hover ? base + 2.5 : base;
+}
+
+/* The bus counterpart. Trains are 5 px and these are 1.6, so this deliberately
+   isn't the same +2.5: on a line this thin that reads as a different layer
+   appearing rather than the one under the cursor responding. Roughly doubling
+   it says "this is clickable" without letting a context layer outweigh a
+   route. Heavier over imagery for the same reason the rail is. */
+function corridorWeight(hover) {
+  const base = document.body.classList.contains("imagery") ? 2.2 : 1.6;
+  return hover ? base + 1.8 : base;
+}
+
+/* Hollow dot for a regular stop, filled for a transfer — the same language the
+   sidebar uses. Imagery gets a heavier ring so the dots don't sink into it. */
+function stationIcon(line, station, hover) {
+  const onImagery = document.body.classList.contains("imagery");
+  const p = palette();
+  const base = station.transfer ? 7 : 5.5;
+  return {
+    path: google.maps.SymbolPath.CIRCLE,
+    scale: base * (hover ? 1.3 : 1),
+    fillColor: station.transfer ? line.color : p.dotFill,
+    fillOpacity: 1,
+    strokeColor: station.transfer ? p.dotRing : line.color,
+    strokeWeight: (station.transfer ? 2.5 : 3) + (onImagery ? 0.5 : 0),
+    strokeOpacity: 1
+  };
+}
+
+function addressIcon() {
+  return {
+    path: google.maps.SymbolPath.CIRCLE,
+    scale: 7.5,
+    fillColor: palette().accent,
+    fillOpacity: 1,
+    strokeColor: "#ffffff",
+    strokeWeight: 3
+  };
+}
+
+function refreshStationIcons() {
+  stationIndex.forEach(e => e.marker.setIcon(stationIcon(e.line, e.station, false)));
+}
+
+/* Google's encoded polyline format. Inlined rather than pulling in the
+   geometry library for one function. */
+function decodePath(encoded) {
+  const points = [];
+  let index = 0, lat = 0, lng = 0;
+
+  while (index < encoded.length) {
+    for (const axis of [0, 1]) {
+      let result = 0, shift = 0, byte;
+      do {
+        byte = encoded.charCodeAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20);
+      const delta = (result & 1) ? ~(result >> 1) : (result >> 1);
+      if (axis === 0) lat += delta; else lng += delta;
+    }
+    points.push({ lat: lat / 1e5, lng: lng / 1e5 });
+  }
+  return points;
+}
+
+/* Mirrors the CSS breakpoint below — the stylesheet can shrink the text but
+   only this caps the bubble itself. Read per open, so a rotation or a resized
+   window is picked up without a listener. */
+function infoWindowWidth() {
+  return window.matchMedia("(max-width: 1024px), (pointer: coarse)").matches ? 215 : 280;
+}
+
+/* The two things every popup does before it opens, in the order that matters:
+   one bubble at a time on a phone, and a width re-read per call so rotating the
+   device resizes the next one. Three call sites had their own copy. */
+function prepareInfoWindow() {
+  if (onPhone()) closeLinePanel();
+  infoWindow.setOptions({ maxWidth: infoWindowWidth() });
+}
+
+/* The phone layout specifically — the width at which the sidebar drops below
+   the map. A tablet has room for a station bubble and a line card at once; a
+   phone doesn't, so there they take turns. Read per call so rotating works. */
+function onPhone() {
+  return window.matchMedia("(max-width: 760px)").matches;
+}
+
+function openStation(entry) {
+  const { station } = entry;
+
+  // Closing the line panel first also lets its visibility restore settle
+  // before the bubble anchors to a marker.
+  prepareInfoWindow();
+
+  const badges = entry.lines.map(l =>
+    `<span class="badge" style="background:${l.color}">${l.name.split(" — ")[0]}</span>`
+  ).join("");
+
+  // With an address pinned, directions start from it rather than the user's
+  // current location — that's almost always the question being asked here.
+  const from = currentAddress
+    ? `<p class="from">from ${escapeHtml(currentAddress.name)}</p>`
+    : "";
+
+  infoWindow.setContent(`
+    <div class="iw">
+      <h3>${escapeHtml(stationName(station))}</h3>
+      <div class="badges">${badges}</div>
+      ${station.addr ? `<p class="addr">${escapeHtml(stationAddr(station))}</p>` : ""}
+      ${station.conn ? `<p class="conn">${escapeHtml(stationConn(station))}</p>` : ""}
+      ${station.alert ? `
+        <p class="alert">
+          <span class="sym" role="img" aria-label="${escapeHtml(t("underConstructionCard"))}">&#9888;&#xFE0E;</span>
+          <span>${escapeHtml(stationAlert(station))}.
+            <a href="${alertsUrl()}" target="_blank" rel="noopener">${t("checkAlerts")}</a>
+            ${t("forClosures")}</span>
+        </p>` : ""}
+      ${isAccessible(station) ? `
+        <p class="a11y">
+          <span class="sym" role="img" aria-label="${escapeHtml(accessLabel())}">&#9855;</span>
+          <span><strong>${escapeHtml(accessLabel())}</strong><br>${escapeHtml(accessDetail())}</span>
+        </p>` : ""}
+      ${from}
+      <div class="links">
+        <a href="${directionsUrl(station, "transit")}" target="_blank" rel="noopener">${t("transitDirections")}</a>
+        <a href="${directionsUrl(station, "walking")}" target="_blank" rel="noopener">${t("walking")}</a>
+        <a href="${mapsUrl(station)}" target="_blank" rel="noopener">${t("openInMaps")}</a>
+        ${isAccessible(station)
+          ? `<a href="${alertsUrl()}" target="_blank" rel="noopener">${t("elevatorAlerts")}</a>`
+          : ""}
+      </div>
+    </div>
+  `);
+  infoWindow.open({ map, anchor: entry.marker });
+
+  map.panTo({ lat: station.lat, lng: station.lng });
+  if (map.getZoom() < 14) map.setZoom(14);
+}
+
+/* =========================================================================
+   Line details popup
+
+   Clicking a route on the map — or the (i) button on a sidebar card — opens a
+   card summarising the line and listing every stop in order.
+   ========================================================================= */
+
+let visibilitySnapshot = null;  // every layer's visibility before the popup isolated one
+let openedAt = 0;               // guards the opening click from closing it again
+let focusedLine = null;         // lineId whose stops are named regardless of zoom
+
+function openLinePanel(line) {
+  const el = document.getElementById("line-panel");
+  const stops = line.stations;
+  const length = lineLength(line);
+  const transfers = stops.filter(s => s.transfer);
+
+  // Lines sharing at least one station with this one.
+  const meets = NETWORK.filter(other => other !== line &&
+    other.stations.some(a => stops.some(b => b.name === a.name)));
+
+  const tunnel = line.tunnel
+    ? `${stationName(stops[line.tunnel[0]])} – ${stationName(stops[line.tunnel[1]])}`
+    : null;
+
+  const near = currentAddress ? closestOnLine(currentAddress, line) : null;
+
+  const notes = [
+    `<div><b>${escapeHtml(stationName(stops[0]))}</b> ↔ <b>${escapeHtml(stationName(stops[stops.length - 1]))}</b></div>`,
+    tunnel ? `<div>${t("underground")}: <b>${escapeHtml(tunnel)}</b></div>` : "",
+    meets.length
+      ? `<div>${t("connectsWith")} <b>${meets.map(l => escapeHtml(lineName(l).split(" — ")[0])).join(", ")}</b>
+         ${t("at")} ${transfers.map(s => escapeHtml(stationName(s))).join(", ")}</div>`
+      : "",
+    `<div>${t("allStopsAccessible")}</div>`,
+    near
+      ? `<div>${t("from")} ${escapeHtml(currentAddress.name)} : ${t("nearestIs")}
+         <b>${escapeHtml(stationName(near.station))}</b>, ${formatDistance(near.dist)}</div>`
+      : ""
+  ].join("");
+
+  const rows = stops.map((station, i) => `
+    <div class="lp-stop${i === 0 || i === stops.length - 1 ? " end" : ""}${station.transfer ? " transfer" : ""}"
+         style="color:${line.color}" data-station="${escapeHtml(station.name)}">
+      <span class="dot"></span>
+      <span class="label">${escapeHtml(stationName(station))}</span>
+      ${isAccessible(station)
+        ? `<span class="a11y" role="img" aria-label="${escapeHtml(accessLabel())}">&#9855;&#xFE0E;</span>`
+        : ""}
+      ${station.transfer ? `<span class="tag">${t("transfer")}</span>` : ""}
+    </div>
+  `).join("");
+
+  el.innerHTML = `
+    <div class="lp-head">
+      <span class="lp-bar" style="background:${line.color}"></span>
+      <span class="lp-title">
+        <div class="n">${escapeHtml(lineName(line))}</div>
+        <div class="fr">${escapeHtml(lang === "fr" ? line.name : line.nameFr)}</div>
+      </span>
+      <button id="lp-close" title="${t("close")}" aria-label="${t("closeLineDetails")}">&times;</button>
+    </div>
+
+    <div class="lp-stats">
+      <div class="lp-stat"><div class="k">${t("stations")}</div><div class="v">${stops.length}</div></div>
+      <div class="lp-stat"><div class="k">${t("length")}</div><div class="v">≈ ${formatDistance(length)}</div></div>
+      <div class="lp-stat"><div class="k">${t("avgSpacing")}</div><div class="v">${formatDistance(length / (stops.length - 1))}</div></div>
+      <div class="lp-stat"><div class="k">${t("transfers")}</div><div class="v">${transfers.length || t("none")}</div></div>
+    </div>
+
+    <div class="lp-notes">${notes}</div>
+
+    <div class="lp-list">${rows}</div>
+  `;
+
+  if (onPhone()) infoWindow.close();   // the other half of one-popup-at-a-time
+
+  el.hidden = false;
+  document.body.classList.add("line-open");
+  focusedLine = line.id;        // set before isolateLine, which recomputes labels
+  isolateLine(line);
+  zoomToLine(line);
+  openedAt = performance.now();
+
+  el.querySelector("#lp-close").addEventListener("click", closeLinePanel);
+
+  el.querySelectorAll(".lp-stop").forEach(row => {
+    row.addEventListener("click", () => {
+      const entry = stationIndex.find(e => e.station.name === row.dataset.station);
+      if (!entry) return;
+
+      // Order matters on a phone, where this panel is about to close: closing
+      // restores the visibility the popup overrode, so do it first and then
+      // make sure the line is showing. The other way round, the restore would
+      // undo it and the bubble would anchor to a detached marker.
+      if (onPhone()) closeLinePanel();
+      if (!layers[line.id].visible) applyLineVisibility(line.id, true);
+
+      openStation(entry);
+    });
+  });
+}
+
+function closeLinePanel() {
+  const el = document.getElementById("line-panel");
+  if (el.hidden) return;
+  el.hidden = true;
+  el.innerHTML = "";
+  document.body.classList.remove("line-open");
+  focusedLine = null;
+  restoreVisibility();
+}
+
+/* Frame the whole line, padded clear of the popup — which sits down the left
+   on a desktop and across the bottom on a phone. Padding comes off the usable
+   area, so a long line on a small screen can land below DETAIL_MIN_ZOOM and
+   drop its dots; the popup lists every stop anyway. */
+function zoomToLine(line) {
+  const bounds = new google.maps.LatLngBounds();
+  layers[line.id].path.forEach(point => bounds.extend(point));
+
+  const narrow = window.matchMedia("(max-width: 760px)").matches;
+  map.fitBounds(bounds, narrow
+    ? { top: 20, right: 16, bottom: 200, left: 16 }
+    : { top: 60, right: 60, bottom: 60, left: 300 });
+}
+
+/* The context layers move with the rail lines, and for the same reason. The
+   two of them carry more ink than the network does — eight bus corridors and
+   three dashed Stage 2 projects — so isolating Line 2 while leaving them up
+   isn't isolating anything. Every layer goes down; the framed line stays. */
+function applyTransitwayVisibility(visible) {
+  syncCard(".line-card.transitway", visible);
+  setTransitwayVisible(visible);
+}
+
+function applyFutureVisibility(visible) {
+  syncCard(".line-card.future", visible);
+  setFutureVisible(visible);
+}
+
+/* Keeps a sidebar card's switch honest when something other than a click on it
+   changed the layer — which is what isolating a line does to all five. */
+function syncCard(selector, visible) {
+  const card = document.querySelector(selector);
+  if (!card) return;
+  card.classList.toggle("on", visible);
+  card.querySelector(".toggle")?.setAttribute("aria-checked", String(visible));
+}
+
+/* Opening a line's details isolates it on the map; closing puts back whatever
+   was showing beforehand, rather than blanket-enabling everything — a layer
+   the user had deliberately switched off stays off. */
+function isolateLine(line) {
+  if (!visibilitySnapshot) {
+    visibilitySnapshot = {
+      lines: {},
+      transitway: transitwayVisible,
+      future: futureVisible
+    };
+    NETWORK.forEach(l => { visibilitySnapshot.lines[l.id] = layers[l.id].visible; });
+  }
+  NETWORK.forEach(l => applyLineVisibility(l.id, l === line));
+  applyTransitwayVisibility(false);
+  applyFutureVisibility(false);
+}
+
+function restoreVisibility() {
+  if (!visibilitySnapshot) return;
+  NETWORK.forEach(l => applyLineVisibility(l.id, visibilitySnapshot.lines[l.id]));
+  applyTransitwayVisibility(visibilitySnapshot.transitway);
+  applyFutureVisibility(visibilitySnapshot.future);
+  visibilitySnapshot = null;
+}
+
+/* Measured along the real alignment, so this is the actual route length rather
+   than the sum of the straight hops between stations. */
+function lineLength(line) {
+  const path = layers[line.id].path;
+  let total = 0;
+  for (let i = 1; i < path.length; i++) total += haversine(path[i - 1], path[i]);
+  return total;
+}
+
+function closestOnLine(point, line) {
+  return closestStation(point, line.stations);
+}
+
+function closestStation(point, stations) {
+  let best = null;
+  stations.forEach(station => {
+    const dist = haversine(point, station);
+    if (!best || dist < best.dist) best = { station, dist };
+  });
+  return best;
+}
+
+/* The two things the address panel needs from a line that the rapid bus
+   pseudo-line can't answer the same way as a rail line: its colour follows the
+   theme rather than being fixed, and its visibility lives in a flag rather
+   than in `layers`. */
+const lineColour = line => line.isTransitway ? palette().transitway : line.color;
+const lineVisible = line => line.isTransitway ? transitwayVisible : layers[line.id].visible;
+
+/* Keeps the map layer and the sidebar toggle in agreement. */
+function applyLineVisibility(lineId, visible) {
+  syncCard(`.line-card[data-line="${lineId}"]`, visible);
+  setLineVisible(lineId, visible);
+}
+
+/* A visible line always draws its route. The detail laid over that route —
+   station dots and tunnel dashes — only appears from DETAIL_MIN_ZOOM up.
+   A transfer station survives as long as any one of its lines is showing. */
+function updateDetailVisibility() {
+  const zoom = map.getZoom();
+  const detailed = zoom >= DETAIL_MIN_ZOOM;
+
+  Object.values(layers).forEach(layer => {
+    layer.route.setMap(layer.visible ? map : null);
+    layer.tunnels.forEach(t => t.setMap(layer.visible && detailed ? map : null));
+  });
+
+  stationIndex.forEach(entry => {
+    const onLive = entry.lines.some(l => layers[l.id].visible);
+
+    // A framed line names every one of its stops, whatever the zoom. Framing
+    // a 19 km line puts the camera below the usual thresholds, and the whole
+    // point of framing it is to read its stops.
+    const focused = focusedLine && entry.lines.some(l => l.id === focusedLine);
+    const shown = (detailed || focused) && onLive;
+
+    entry.marker.setMap(shown ? map : null);
+
+    // Terminus names run ahead of their dots: below DETAIL_MIN_ZOOM the line
+    // simply ends at its name, which is how a regional map reads. Everything
+    // else stays tied to its dot.
+    entry.labelShown = (shown || zoom >= entry.labelZoom) && onLive;
+    entry.labelForced = !!focused;
+  });
+
+  /* Stage 2 and Transitway stations are stations too, so they leave with the
+     rail dots rather than hanging on alone at zoom 11. Their lines stay drawn:
+     a route is still worth seeing when its stops are too crowded to place. */
+  const station = s => s instanceof google.maps.Marker;
+  futureShapes.forEach(s =>
+    s.setMap(futureVisible && (!station(s) || detailed) ? map : null));
+  transitwayShapes.forEach(s =>
+    s.setMap(transitwayVisible && (!station(s) || detailed) ? map : null));
+
+  // Stage 2 names ride the same switch as its lines and dots; draw() still has
+  // the final say on zoom and collisions.
+  futureLabels.forEach(entry => { entry.labelShown = futureVisible; });
+  transitLabels.forEach(entry => { entry.labelShown = transitwayVisible; });
+
+  if (stationLabels) stationLabels.draw();
+}
+
+/* Universal Google Maps URLs — plain links, no API key or quota involved.
+   Coordinates rather than station names, so the link can't land on the wrong
+   "Rideau" somewhere else. */
+function directionsUrl(station, mode) {
+  const params = new URLSearchParams({
+    api: "1",
+    destination: `${station.lat},${station.lng}`,
+    travelmode: mode
+  });
+  if (currentAddress) params.set("origin", `${currentAddress.lat},${currentAddress.lng}`);
+  params.set("hl", lang);   // land on Google Maps in the reader's language
+  return "https://www.google.com/maps/dir/?" + params;
+}
+
+function mapsUrl(station) {
+  return "https://www.google.com/maps/search/?" + new URLSearchParams({
+    api: "1",
+    query: `${station.lat},${station.lng}`,
+    hl: lang
+  });
+}
+
+function setLineVisible(lineId, visible) {
+  const layer = layers[lineId];
+  if (!layer) return;
+  layer.visible = visible;
+  updateDetailVisibility();
+  syncConnector(lineId, visible);
+}
+
+/* Hiding a layer also hides its address connector; the panel row stays but
+   dims. Shared with the rapid bus toggle, which has the same two things to
+   keep in step. */
+function syncConnector(lineId, visible) {
+  if (connectors[lineId]) connectors[lineId].setMap(visible ? map : null);
+
+  const row = document.querySelector(`.near[data-line="${lineId}"]`);
+  if (row) {
+    row.classList.toggle("hidden-line", !visible);
+    const ln = row.querySelector(".ln");
+    if (ln) ln.textContent = ln.dataset.name + (visible ? "" : t("hidden").replace(/&middot;/g, "·"));
+  }
+}
+
+/* =========================================================================
+   Sidebar
+   ========================================================================= */
+
+function buildSidebar() {
+  const container = document.getElementById("lines");
+  container.innerHTML = "";
+
+  NETWORK.forEach((line, i) => {
+    const card = document.createElement("div");
+    card.className = "line-card on" + (i === 0 ? " expanded" : "");
+    card.dataset.line = line.id;
+
+    const head = document.createElement("div");
+    head.className = "line-head";
+    head.innerHTML = `
+      <span class="swatch" style="background:${line.color}"></span>
+      <span class="line-meta">
+        <span class="name">${escapeHtml(lineName(line))}</span><br>
+        <span class="sub">${line.stations.length} ${t("stations").toLowerCase()} · ${escapeHtml(lineSpan(line))}</span>
+      </span>
+      <button class="line-info" title="${t("lineDetails")}" aria-label="${escapeHtml(t("detailsFor", lineName(line)))}">i</button>
+      <span class="toggle" role="switch" aria-checked="true" title="${t("showHideOnMap")}"></span>
+    `;
+    head.addEventListener("click", e => {
+      if (e.target.closest(".line-info")) {
+        openLinePanel(line);
+      } else if (e.target.classList.contains("toggle")) {
+        applyLineVisibility(line.id, !card.classList.contains("on"));
+      } else {
+        card.classList.toggle("expanded");
+      }
+    });
+
+    const list = document.createElement("div");
+    list.className = "stations";
+
+    line.stations.forEach(station => {
+      const row = document.createElement("div");
+      row.className = "station" + (station.transfer ? " transfer" : "");
+      row.style.color = line.color;
+      // Street names are searchable too, so "Bank St" finds Greenboro.
+      row.dataset.name = (station.name + " " + stationName(station) + " " +
+        (station.addr || "") + " " + (stationAddr(station) || "")).toLowerCase();
+      if (station.addr) row.title = stationAddr(station);
+      row.innerHTML = `
+        <span class="dot"></span>
+        <span class="label">${escapeHtml(stationName(station))}</span>
+        ${isAccessible(station)
+          ? `<span class="a11y" role="img" aria-label="${escapeHtml(accessLabel())}">&#9855;&#xFE0E;</span>`
+          : ""}
+        ${station.transfer ? `<span class="tag">${t("transfer")}</span>` : ""}
+      `;
+      row.addEventListener("click", () => {
+        const entry = stationIndex.find(e => e.station.name === station.name);
+        if (entry) openStation(entry);
+      });
+      list.appendChild(row);
+    });
+
+    card.append(head, list);
+    container.appendChild(card);
+  });
+
+  container.appendChild(buildTransitwayCard());
+  container.appendChild(buildFutureCard());
+}
+
+/* Expands into its stations the way a rail card does, but each row carries the
+   routes calling there rather than a street address — for a bus interchange
+   that IS the useful fact, and it's the one thing the map itself can't show
+   without being clicked. On by default, unlike Stage 2: the Transitway is
+   running today and is part of how the city actually moves. */
+function buildTransitwayCard() {
+  const card = document.createElement("div");
+  card.className = "line-card transitway" + (transitwayVisible ? " on" : "");
+  card.dataset.line = TRANSITWAY_LINE.id;
+
+  const head = document.createElement("div");
+  head.className = "line-head";
+  head.innerHTML = `
+    <span class="swatch transitway-swatch"></span>
+    <span class="line-meta">
+      <span class="name">${t("rapidBusRoutes")}</span><br>
+      <span class="sub">${t("frequentCorridors", TRANSIT_STATIONS.length)}</span>
+    </span>
+    <span class="toggle" role="switch" aria-checked="${transitwayVisible}"
+          title="${t("showHideRapidBus")}"></span>
+  `;
+  head.addEventListener("click", e => {
+    if (e.target.classList.contains("toggle")) {
+      const on = card.classList.toggle("on");
+      e.target.setAttribute("aria-checked", String(on));
+      setTransitwayVisible(on);
+    } else {
+      card.classList.toggle("expanded");
+    }
+  });
+
+  const list = document.createElement("div");
+  list.className = "stations";
+
+  // North to south, matching how the rail cards run their lines end to end
+  // rather than leaving the reader with the order the data happened to be in.
+  [...TRANSIT_STATIONS].sort((a, b) => b.lat - a.lat).forEach(station => {
+    const routes = stationRoutes(station);
+
+    const row = document.createElement("div");
+    row.className = "station bus-row";
+    // Searchable by route as well as by name, so typing "63" finds every
+    // station the 63 calls at — the reverse of what the row itself shows.
+    // Both names, so "Aéroport" and "Airport" both find the station whichever
+    // language is showing.
+    row.dataset.name = (station.name + " " + stationName(station) + " " +
+      routes.join(" ")).toLowerCase();
+    row.innerHTML = `
+      <span class="dot"></span>
+      <span class="bus-meta">
+        <span class="label">${escapeHtml(stationName(station))}</span>
+        ${routes.length
+          ? `<span class="bus-routes">${routeChips(routes)}</span>`
+          : `<span class="none">${t("noRouteData")}</span>`}
+      </span>
+      ${station.shared ? `<span class="tag">${t("rail")}</span>`
+        : station.stage2 ? `<span class="tag">${t("stage2Tag")}</span>` : ""}
+    `;
+
+    // A chip is a link out to a schedule; only a click on the rest of the row
+    // means "show me this station".
+    row.addEventListener("click", e => {
+      if (e.target.closest(".route")) return;
+      const entry = transitLabels.find(t => t.station.name === station.name);
+      if (entry) openTransitStation(entry);
+    });
+
+    list.appendChild(row);
+  });
+
+  card.append(head, list);
+  return card;
+}
+
+/* One card for all of Stage 2 rather than one per project — it's a single
+   "show me what's coming" decision, and three more toggles would crowd out the
+   lines that actually run. Off by default: the open network is the subject. */
+function buildFutureCard() {
+  const card = document.createElement("div");
+  card.className = "line-card future" + (futureVisible ? " on" : "");
+
+  const stops = FUTURE.reduce((n, p) => n + p.stations.length, 0);
+
+  const head = document.createElement("div");
+  head.className = "line-head";
+  head.innerHTML = `
+    <span class="swatch dashed-swatch"></span>
+    <span class="line-meta">
+      <span class="name">${t("underConstructionCard")}</span><br>
+      <span class="sub">${t("stage2Stations", stops)}</span>
+    </span>
+    <span class="toggle" role="switch" aria-checked="${futureVisible}"
+          title="${t("showHideWip")}"></span>
+  `;
+  head.addEventListener("click", e => {
+    if (e.target.classList.contains("toggle")) {
+      const on = card.classList.toggle("on");
+      e.target.setAttribute("aria-checked", String(on));
+      setFutureVisible(on);
+    } else {
+      card.classList.toggle("expanded");
+    }
+  });
+
+  const list = document.createElement("div");
+  list.className = "stations";
+  FUTURE.forEach(project => {
+    const row = document.createElement("div");
+    row.className = "station future-row";
+    row.style.color = project.color;
+    // Searchable by the stations it will serve, so looking up "Moodie" surfaces
+    // the project rather than coming back empty.
+    row.dataset.name = (project.name + " " + lineName(project) + " " + project.note + " " +
+      project.stations.map(s => s.name + " " + stationName(s)).join(" ")).toLowerCase();
+    row.innerHTML = `
+      <span class="dot"></span>
+      <span class="label">${escapeHtml(lineName(project))}
+        <span class="future-note">${escapeHtml(project.note)}${
+          project.path ? "" : t("routeNotMapped")}</span>
+      </span>
+      <span class="tag">${project.stations.length}</span>
+    `;
+    list.appendChild(row);
+  });
+
+  card.append(head, list);
+  return card;
+}
+
+function filterStations(q) {
+  document.querySelectorAll(".line-card").forEach(card => {
+    let hits = 0;
+    card.querySelectorAll(".station").forEach(row => {
+      const match = !q || (row.dataset.name || "").includes(q);
+      row.style.display = match ? "" : "none";
+      if (match) hits++;
+    });
+    card.style.display = q && hits === 0 ? "none" : "";
+    if (q) card.classList.add("expanded");
+  });
+}
+
+/* =========================================================================
+   Address search
+
+   The one search box does two things: it filters the station list as you
+   type, and — from three characters on — asks Google Places for matching
+   addresses nearby. Picking one drops a pin and measures it against every
+   line, so the question "how close is this place to the train?" is answered
+   without leaving the page.
+   ========================================================================= */
+
+// Autocomplete is biased to this box rather than restricted to it, so an
+// address just outside town still resolves instead of silently vanishing.
+const OTTAWA_BOUNDS = { west: -76.36, south: 44.96, east: -75.24, north: 45.58 };
+
+const WALK_M_PER_MIN = 80;   // ~4.8 km/h
+const WALK_DETOUR = 1.3;     // streets don't run in straight lines
+
+let placesLib = null;        // null until the Places library resolves
+let sessionToken = null;     // one token per autocomplete session, per billing rules
+let geocoder = null;
+
+let addrMarker = null;
+let currentAddress = null;   // the pinned address, if any — used as a directions origin
+const connectors = {};       // lineId -> dashed polyline from address to its nearest station
+
+let predictions = [];
+let activeIndex = -1;
+let queryCounter = 0;        // guards against a slow response overwriting a newer one
+let debounceTimer = null;
+
+const searchEl = document.getElementById("search");
+const suggestEl = document.getElementById("suggest");
+const panelEl = document.getElementById("addr-panel");
+
+function initSearch() {
+  // Loaded lazily: the station half of the search box works with or without it.
+  google.maps.importLibrary("places")
+    .then(lib => { placesLib = lib; })
+    .catch(() => { placesLib = null; });
+
+  searchEl.addEventListener("input", () => {
+    const q = searchEl.value.trim();
+    filterStations(q.toLowerCase());
+
+    clearTimeout(debounceTimer);
+    if (q.length < 3) { hideSuggestions(); return; }
+    debounceTimer = setTimeout(() => fetchSuggestions(q), 250);
+  });
+
+  searchEl.addEventListener("keydown", e => {
+    if (e.key === "Escape") { hideSuggestions(); return; }
+
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!predictions.length) return;
+      e.preventDefault();
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      activeIndex = (activeIndex + step + predictions.length) % predictions.length;
+      markActive();
+      return;
+    }
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (predictions.length) choosePrediction(activeIndex < 0 ? 0 : activeIndex);
+      else geocodeQuery(searchEl.value.trim());
+    }
+  });
+
+  // pointerdown covers mouse and touch alike, and fires before the blur that
+  // would otherwise tear the list down before the selection registered.
+  suggestEl.addEventListener("pointerdown", e => {
+    const row = e.target.closest(".sug");
+    if (row) { e.preventDefault(); choosePrediction(Number(row.dataset.i)); }
+  });
+
+  document.addEventListener("pointerdown", e => {
+    if (!e.target.closest(".search-wrap")) hideSuggestions();
+  });
+}
+
+/* Google ships two autocomplete APIs and a key may carry either. The console
+   calls the current one "Places API" (places.googleapis.com) and the older one
+   "Places API (Legacy)" (places-backend.googleapis.com) — names close enough
+   that enabling the wrong one looks like enabling the right one. So rather
+   than demanding a particular API, try the modern one and fall back.
+
+   The fallback is sticky: once the modern API answers "blocked", every later
+   keystroke would get the same refusal, so stop asking. */
+let placesMode = "modern";        // "modern" | "legacy" | "none"
+let legacyAutocomplete = null;
+
+async function fetchSuggestions(input) {
+  const seq = ++queryCounter;
+
+  if (!placesLib) {
+    showSuggestMessage("Address search needs a Places API enabled on your key. " +
+      "Press Enter to try a plain lookup.");
+    return;
+  }
+
+  try {
+    let found = null;
+
+    if (placesMode === "modern") {
+      try {
+        found = await modernSuggestions(input);
+      } catch (err) {
+        if (!isBlocked(err)) throw err;
+        placesMode = "legacy";   // demote once, quietly, and carry on
+      }
+    }
+    if (found === null) found = await legacySuggestions(input);
+
+    if (seq !== queryCounter) return;   // a newer keystroke already won
+    predictions = found;
+    renderSuggestions();
+  } catch (err) {
+    if (seq !== queryCounter) return;
+    predictions = [];
+    showSuggestMessage(explainLookupFailure(err));
+  }
+}
+
+/* Both paths return the same shape, so the rest of the UI never learns which
+   API answered: a label to show, and a way to turn it into coordinates. */
+async function modernSuggestions(input) {
+  sessionToken = sessionToken || new placesLib.AutocompleteSessionToken();
+  const { suggestions } = await placesLib.AutocompleteSuggestion.fetchAutocompleteSuggestions({
+    input,
+    sessionToken,
+    locationBias: OTTAWA_BOUNDS,
+    includedRegionCodes: ["ca"],
+    language: lang
+  });
+
+  return suggestions.map(s => s.placePrediction).filter(Boolean).map(p => ({
+    main: text(p.mainText) || text(p.text),
+    secondary: p.secondaryText ? text(p.secondaryText) : "",
+    resolve: async () => {
+      const place = p.toPlace();
+      await place.fetchFields({ fields: ["location", "formattedAddress", "displayName"] });
+      sessionToken = null;                 // the details call closes the session
+      return {
+        name: place.displayName || text(p.mainText),
+        sub: place.formattedAddress || "",
+        lat: place.location.lat(),
+        lng: place.location.lng()
+      };
+    }
+  }));
+}
+
+function legacySuggestions(input) {
+  legacyAutocomplete = legacyAutocomplete || new placesLib.AutocompleteService();
+
+  return new Promise((resolve, reject) => {
+    legacyAutocomplete.getPlacePredictions(
+      { input, bounds: OTTAWA_BOUNDS, componentRestrictions: { country: "ca" } },
+      (results, status) => {
+        const S = google.maps.places.PlacesServiceStatus;
+        if (status === S.ZERO_RESULTS) return resolve([]);
+        if (status !== S.OK) return reject(new Error("Places lookup failed: " + status));
+
+        resolve(results.map(r => ({
+          main: r.structured_formatting?.main_text || r.description,
+          secondary: r.structured_formatting?.secondary_text || "",
+          // The legacy predictions carry a place ID but no coordinates, and the
+          // Geocoding API resolves one without needing Places details.
+          resolve: async () => {
+            geocoder = geocoder || new google.maps.Geocoder();
+            const { results: hits } = await geocoder.geocode({ placeId: r.place_id });
+            const best = hits[0];
+            return {
+              name: r.structured_formatting?.main_text || best.formatted_address.split(",")[0],
+              sub: best.formatted_address,
+              lat: best.geometry.location.lat(),
+              lng: best.geometry.location.lng()
+            };
+          }
+        })));
+      }
+    );
+  });
+}
+
+function isBlocked(err) {
+  return /blocked|has not been used in project|is disabled|SERVICE_DISABLED|PERMISSION_DENIED/i
+    .test(String(err && err.message));
+}
+
+/* Google's own message is the useful part — it names the project and links
+   straight to the page that fixes it — but it arrives as plain text, so the
+   link can't be clicked from inside the dropdown. Escape it, then turn any URL
+   back into an anchor, and add the one thing Google can't know: that Enter
+   still works if the Geocoding API is enabled instead. */
+function explainLookupFailure(err) {
+  const raw = escapeHtml(err && err.message ? err.message : "unknown error");
+  const linked = raw.replace(/https?:\/\/[^\s<]+/g, url =>
+    `<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
+
+  const notEnabled = /has not been used in project|is disabled|SERVICE_DISABLED/i.test(raw);
+  return notEnabled
+    ? `<strong>Address search isn't switched on for this key.</strong><br>${linked}
+       <br><br>Station search still works, and pressing Enter falls back to the
+       Geocoding API if that one is enabled.`
+    : `Address lookup failed: ${linked}`;
+}
+
+function renderSuggestions() {
+  if (!predictions.length) { hideSuggestions(); return; }
+
+  activeIndex = -1;
+  suggestEl.innerHTML = predictions.map((p, i) => `
+    <div class="sug" role="option" data-i="${i}">
+      <div class="main">${escapeHtml(p.main)}</div>
+      ${p.secondary ? `<div class="sub">${escapeHtml(p.secondary)}</div>` : ""}
+    </div>
+  `).join("");
+  openSuggestions();
+}
+
+function showSuggestMessage(html) {
+  predictions = [];
+  activeIndex = -1;
+  suggestEl.innerHTML = `<div class="msg">${html}</div>`;
+  openSuggestions();
+}
+
+function openSuggestions() {
+  suggestEl.hidden = false;
+  searchEl.setAttribute("aria-expanded", "true");
+}
+
+function hideSuggestions() {
+  suggestEl.hidden = true;
+  suggestEl.innerHTML = "";
+  searchEl.setAttribute("aria-expanded", "false");
+  predictions = [];
+  activeIndex = -1;
+}
+
+function markActive() {
+  suggestEl.querySelectorAll(".sug").forEach((el, i) =>
+    el.classList.toggle("active", i === activeIndex)
+  );
+}
+
+/* Places wraps prediction strings in a FormattableText object. */
+function text(v) {
+  return v == null ? "" : String(v.text != null ? v.text : v);
+}
+
+async function choosePrediction(i) {
+  const prediction = predictions[i];
+  if (!prediction) return;
+  hideSuggestions();
+
+  try {
+    const addr = await prediction.resolve();
+    showAddress({
+      name: addr.name || searchEl.value.trim(),
+      sub: addr.sub,
+      lat: addr.lat,
+      lng: addr.lng
+    });
+  } catch (err) {
+    showSuggestMessage("Could not load that address: " + escapeHtml(err.message || "unknown error"));
+  }
+}
+
+/* Fallback for when Places isn't available on the key — needs the Geocoding
+   API instead, so it may not work either. Either way the user gets told why. */
+async function geocodeQuery(q) {
+  if (!q) return;
+  try {
+    geocoder = geocoder || new google.maps.Geocoder();
+    const { results } = await geocoder.geocode({ address: q, bounds: OTTAWA_BOUNDS, region: "ca" });
+    if (!results.length) { showSuggestMessage("No address matched that."); return; }
+
+    const best = results[0];
+    showAddress({
+      name: best.formatted_address.split(",")[0],
+      sub: best.formatted_address,
+      lat: best.geometry.location.lat(),
+      lng: best.geometry.location.lng()
+    });
+  } catch (err) {
+    showSuggestMessage("Address lookup needs the <strong>Places API (New)</strong> or <strong>Geocoding API</strong> enabled on your key.");
+  }
+}
+
+/* ---- Placing the result ---- */
+
+function showAddress(addr) {
+  clearAddress({ keepInput: true });
+  hideSuggestions();
+  searchEl.value = addr.name;
+  filterStations("");   // the address text shouldn't keep hiding the station list
+
+  currentAddress = addr;
+
+  addrMarker = new google.maps.Marker({
+    map,
+    position: { lat: addr.lat, lng: addr.lng },
+    title: addr.sub || addr.name,
+    zIndex: 50,
+    icon: addressIcon()
+  });
+
+  const nearest = nearestPerLine(addr);
+  nearest.forEach(hit => drawConnector(addr, hit));
+  renderAddressPanel(addr, nearest);
+
+  // Frame the address together with its single closest station; including
+  // every line's nearest would zoom back out to the whole network.
+  const bounds = new google.maps.LatLngBounds();
+  bounds.extend({ lat: addr.lat, lng: addr.lng });
+  bounds.extend({ lat: nearest[0].station.lat, lng: nearest[0].station.lng });
+  map.fitBounds(bounds, { top: 70, right: 70, bottom: 70, left: 70 });
+  google.maps.event.addListenerOnce(map, "idle", () => {
+    if (map.getZoom() > 16) map.setZoom(16);
+  });
+}
+
+/* Closest station on each line, nearest line first — rapid bus included, since
+   the nearest way out of a neighbourhood is often a bus station, and a panel
+   that only ever named train stops answered a narrower question than the one
+   being asked. A station both networks serve (Hurdman, Baseline) can appear
+   twice, once per row; that is the honest answer rather than a duplicate. */
+function nearestPerLine(addr) {
+  const hits = NETWORK.map(line => ({ line, ...closestOnLine(addr, line) }));
+
+  const bus = closestStation(addr, TRANSIT_STATIONS);
+  if (bus) hits.push({ line: TRANSITWAY_LINE, ...bus });
+
+  return hits.sort((a, b) => a.dist - b.dist);
+}
+
+function drawConnector(addr, hit) {
+  connectors[hit.line.id] = new google.maps.Polyline({
+    path: [{ lat: addr.lat, lng: addr.lng }, { lat: hit.station.lat, lng: hit.station.lng }],
+    map: lineVisible(hit.line) ? map : null,
+    geodesic: true,
+    strokeOpacity: 0,
+    zIndex: 4,
+    icons: connectorIcons(lineColour(hit.line))
+  });
+}
+
+/* Split out because the rapid bus connector is recoloured on a theme change —
+   its colour is a palette entry, not a fixed line colour. */
+function connectorIcons(colour) {
+  return [{
+    icon: {
+      path: "M 0,-1 0,1",
+      strokeColor: colour,
+      strokeOpacity: 0.9,
+      strokeWeight: 2.5,
+      scale: 2
+    },
+    offset: "0",
+    repeat: "10px"
+  }];
+}
+
+function renderAddressPanel(addr, nearest) {
+  const rows = nearest.map(hit => {
+    const hidden = !lineVisible(hit.line);
+    const short = hit.line.name.split(" — ")[0];
+    // The rapid bus bar takes the CSS token rather than an inline colour, so it
+    // follows a theme change without the panel being re-rendered.
+    const bar = hit.line.isTransitway ? "var(--busline)" : hit.line.color;
+    return `
+      <div class="near${hidden ? " hidden-line" : ""}"
+           data-station="${escapeHtml(hit.station.name)}" data-line="${hit.line.id}">
+        <span class="bar" style="background:${bar}"></span>
+        <span class="who">
+          <span class="st">${escapeHtml(hit.station.name)}</span><br>
+          <span class="ln" data-name="${escapeHtml(short)}">${escapeHtml(short)}${hidden ? t("hidden") : ""}</span>
+        </span>
+        <span class="dist">
+          <span class="m">${formatDistance(hit.dist)}</span><br>
+          <span class="walk">${t("minWalk", walkMinutes(hit.dist))}</span>
+        </span>
+      </div>
+    `;
+  }).join("");
+
+  panelEl.innerHTML = `
+    <div class="addr-head">
+      <div class="addr-name">
+        ${escapeHtml(addr.name)}
+        ${addr.sub ? `<div class="addr-sub">${escapeHtml(addr.sub)}</div>` : ""}
+      </div>
+      <button id="addr-clear" title="${t("clearAddress")}" aria-label="${t("clearAddress")}">&times;</button>
+    </div>
+    ${rows}
+    <div class="addr-foot">${t("straightLine")}</div>
+  `;
+  panelEl.hidden = false;
+
+  panelEl.querySelector("#addr-clear").addEventListener("click", () => clearAddress());
+  panelEl.querySelectorAll(".near").forEach(row => {
+    row.addEventListener("click", () => {
+      // Dispatch on the row's own line, not on the station name: a station both
+      // networks serve is in both lists, and the rapid bus row should open the
+      // bus popup even though a rail entry of the same name exists.
+      const entry = row.dataset.line === TRANSITWAY_LINE.id
+        ? transitLabels.find(e => e.station.name === row.dataset.station)
+        : stationIndex.find(e => e.station.name === row.dataset.station);
+      if (!entry) return;
+      if (entry.isTransit) openTransitStation(entry);
+      else openStation(entry);
+    });
+  });
+}
+
+function clearAddress(opts = {}) {
+  if (addrMarker) { addrMarker.setMap(null); addrMarker = null; }
+  currentAddress = null;
+  Object.keys(connectors).forEach(id => {
+    connectors[id].setMap(null);
+    delete connectors[id];
+  });
+  panelEl.hidden = true;
+  panelEl.innerHTML = "";
+
+  if (!opts.keepInput) {
+    searchEl.value = "";
+    filterStations("");
+  }
+}
+
+function haversine(a, b) {
+  const R = 6371000, rad = d => d * Math.PI / 180;
+  const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 +
+            Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/* French writes "1,2 km" with a comma and a non-breaking space before the
+   unit; toLocaleString handles the separator, the NBSP is ours. */
+function formatDistance(m) {
+  const nbsp = lang === "fr" ? "\u00a0" : " ";
+  return m < 1000
+    ? `${formatNumber(Math.round(m / 10) * 10)}${nbsp}m`
+    : `${formatNumber(m / 1000, 1)}${nbsp}km`;
+}
+
+function walkMinutes(m) {
+  return Math.max(1, Math.round(m * WALK_DETOUR / WALK_M_PER_MIN));
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+  );
+}
+
+/* Runs at parse time, before the Maps API loads, so a stored dark theme is in
+   place before anything paints. The map half of setTheme no-ops until initMap
+   has built one. */
+setTheme(storedTheme() || "light");
+lang = storedLang() === "fr" ? "fr" : "en";
+applyLanguage();       // before the first paint, so nothing flashes English
+initSidebarToggle();   // pure DOM, so it works even if the Maps API never loads
+
+/* Google calls this for every auth rejection without saying which one, and the
+   causes need different fixes. The message used to name only a missing key,
+   which sent you to config.js even when the real problem was that this origin
+   isn't on the key's referrer allowlist — the usual story the first time you
+   open the page from a phone. Naming the origin makes it copy-pasteable. */
+window.gm_authFailure = () => {
+  const el = document.getElementById("error");
+  const fromFile = location.protocol === "file:";
+  const origin = escapeHtml(location.origin);
+
+  el.classList.add("on");
+  document.body.classList.add("auth-failed");
+  el.innerHTML = "<div class='inner'>" + (fromFile
+    ? `${t("authFileTitle")} <code>file://</code>${t("authFileBody")}`
+    : t("authOriginTitle", origin) + t("authOriginBody", origin)) + "</div>";
+};
+</script>
+
+<!-- Local, untracked file that sets window.MAPS_API_KEY (see config.example.js) -->
+<script src="config.js"></script>
+
+<!-- Google Maps JavaScript API loader -->
+<script>
+  (g => {
+    var h, a, k, p = "The Google Maps JavaScript API", c = "google", l = "importLibrary",
+        q = "__ib__", m = document, b = window;
+    b = b[c] || (b[c] = {});
+    var d = b.maps || (b.maps = {}), r = new Set(), e = new URLSearchParams(),
+        u = () => h || (h = new Promise(async (f, n) => {
+          await (a = m.createElement("script"));
+          e.set("libraries", [...r] + "");
+          for (k in g) e.set(k.replace(/[A-Z]/g, t => "_" + t[0].toLowerCase()), g[k]);
+          e.set("callback", c + ".maps." + q);
+          a.src = `https://maps.${c}apis.com/maps/api/js?` + e;
+          d[q] = f;
+          a.onerror = () => h = n(Error(p + " could not load."));
+          a.nonce = m.querySelector("script[nonce]")?.nonce || "";
+          m.head.append(a);
+        }));
+    d[l] ? console.warn(p + " only loads once. Ignoring:", g)
+         : d[l] = (f, ...n) => r.add(f) && u().then(() => d[l](f, ...n));
+  })({
+    key: window.MAPS_API_KEY || "YOUR_API_KEY_HERE",
+    v: "weekly",
+    /* The basemap's own labels — street names, rivers, place names — are fixed
+       here at load and have no setter afterwards. This is the reason switching
+       language reloads the page rather than re-rendering in place. Read from
+       localStorage directly: the main script's `lang` isn't in scope from this
+       loader block. */
+    language: (() => {
+      try { return localStorage.getItem("otm-lang") === "fr" ? "fr" : "en"; }
+      catch (e) { return "en"; }
+    })(),
+    region: "CA"
+  });
+
+  (async () => {
+    await google.maps.importLibrary("maps");
+    // StreetViewPanorama lives in its own library; the Pegman control needs it
+    // present before it can drop anyone into a panorama.
+    await google.maps.importLibrary("streetView");
+    initMap();
+  })().catch(err => {
+    const el = document.getElementById("error");
+    el.classList.add("on");
+    document.body.classList.add("auth-failed");
+    el.innerHTML = "<div class='inner'>" + t("loadFailed") +
+      escapeHtml(err.message) + "</div>";
+  });
+</script>
+
+</body>
+</html>
+
